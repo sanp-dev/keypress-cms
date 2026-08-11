@@ -1,0 +1,690 @@
+---
+// src/components/SeoInspectionModal.astro
+---
+
+<div
+    id="seoModalOverlay"
+    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-[100] items-center justify-center opacity-0 transition-opacity duration-300"
+>
+    <div
+        id="seoModalContainer"
+        class="bg-white rounded-2xl shadow-2xl w-[95vw] max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col overflow-hidden max-h-[90vh]"
+    >
+        <!-- Modal Header -->
+        <div
+            class="px-6 py-4 border-b border-slate-100 bg-[#f8fafc] flex items-center justify-between shrink-0"
+        >
+            <div>
+                <h3 class="text-lg font-bold text-[#1e293b]">
+                    SEO URL Inspection
+                </h3>
+                <p class="text-xs text-[#64748b] mt-0.5" id="seoModalHeaderSub">
+                    Checking Google Search Console status
+                </p>
+            </div>
+            <button
+                type="button"
+                onclick="closeSeoModal()"
+                class="text-[#94a3b8] hover:text-[#475569] hover:bg-slate-100 p-1.5 rounded-lg transition-all"
+                title="Close"
+            >
+                <svg
+                    class="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Modal Body (Scrollable) -->
+        <div class="p-6 overflow-y-auto space-y-5 flex-1 text-left">
+            <!-- Loading Skeleton -->
+            <div id="seoModalSkeleton" class="space-y-4 animate-pulse">
+                <div class="h-6 bg-slate-100 rounded w-3/4"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="h-16 bg-slate-100 rounded"></div>
+                    <div class="h-16 bg-slate-100 rounded"></div>
+                </div>
+                <div class="h-28 bg-slate-100 rounded"></div>
+                <div class="h-28 bg-slate-100 rounded"></div>
+            </div>
+
+            <!-- Real Content (Initially Hidden) -->
+            <div id="seoModalContent" class="hidden space-y-5">
+                <!-- URL and Overall Verdict -->
+                <div
+                    class="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                    <div class="min-w-0 flex-1">
+                        <span
+                            class="text-[10px] uppercase tracking-wider font-semibold text-slate-400 block"
+                            >Inspected URL</span
+                        >
+                        <a
+                            id="seoModalUrl"
+                            href="#"
+                            target="_blank"
+                            class="text-sm font-semibold text-[#1a73e8] hover:underline break-all block mt-0.5"
+                        >
+                            -
+                        </a>
+                    </div>
+                    <div class="shrink-0 flex items-center">
+                        <span
+                            id="seoModalVerdictBadge"
+                            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border"
+                        >
+                            <span
+                                id="seoModalVerdictDot"
+                                class="w-1.5 h-1.5 rounded-full"></span>
+                            <span id="seoModalVerdictText">-</span>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 2x3 Grid for General Statuses -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Coverage Status -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Coverage State</span
+                        >
+                        <span
+                            id="seoModalCoverage"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 break-words block leading-relaxed"
+                            >-</span
+                        >
+                    </div>
+
+                    <!-- Last Crawled Time -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Last Crawl Time</span
+                        >
+                        <span
+                            id="seoModalLastCrawl"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 block"
+                            >-</span
+                        >
+                    </div>
+
+                    <!-- Robots.txt State -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Robots.txt Crawl Permission</span
+                        >
+                        <span
+                            id="seoModalRobots"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 block"
+                            >-</span
+                        >
+                    </div>
+
+                    <!-- Indexing Allowed -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Indexing Allowed (noindex tag)</span
+                        >
+                        <span
+                            id="seoModalIndexing"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 block"
+                            >-</span
+                        >
+                    </div>
+
+                    <!-- Page Fetch Status -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Page Fetch Status</span
+                        >
+                        <span
+                            id="seoModalPageFetch"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 block"
+                            >-</span
+                        >
+                    </div>
+
+                    <!-- Mobile Usability -->
+                    <div
+                        class="border border-slate-100 p-3.5 rounded-xl bg-white shadow-sm flex flex-col justify-between"
+                    >
+                        <span class="text-xs font-medium text-[#64748b]"
+                            >Mobile Usability</span
+                        >
+                        <span
+                            id="seoModalMobile"
+                            class="text-sm font-semibold text-[#1e293b] mt-1.5 block"
+                            >-</span
+                        >
+                    </div>
+                </div>
+
+                <!-- Canonical URLs Block -->
+                <div
+                    class="border border-slate-100 rounded-xl overflow-hidden shadow-sm"
+                >
+                    <div
+                        class="bg-[#f8fafc] px-4 py-2.5 border-b border-slate-100 flex items-center gap-2"
+                    >
+                        <svg
+                            class="w-4 h-4 text-[#64748b]"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                            ></path>
+                        </svg>
+                        <span
+                            class="text-xs font-bold text-[#475569] uppercase tracking-wider"
+                            >Canonical Link Declarations</span
+                        >
+                    </div>
+                    <div class="p-4 bg-white space-y-3.5">
+                        <div class="min-w-0">
+                            <span
+                                class="text-xs font-medium text-[#64748b] block"
+                                >User-Declared Canonical</span
+                            >
+                            <span
+                                id="seoModalUserCanonical"
+                                class="text-xs font-semibold text-[#1e293b] break-all block mt-1 leading-normal"
+                                >-</span
+                            >
+                        </div>
+                        <div class="min-w-0 border-t border-slate-50 pt-3">
+                            <span
+                                class="text-xs font-medium text-[#64748b] block"
+                                >Google-Selected Canonical</span
+                            >
+                            <span
+                                id="seoModalGoogleCanonical"
+                                class="text-xs font-semibold text-[#1e293b] break-all block mt-1 leading-normal"
+                                >-</span
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detected Rich Results & Referring Links -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Rich Results Card -->
+                    <div
+                        class="border border-slate-100 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white"
+                    >
+                        <div
+                            class="bg-[#f8fafc] px-4 py-2 border-b border-slate-100"
+                        >
+                            <span
+                                class="text-[10px] font-bold text-[#475569] uppercase tracking-wider"
+                                >Rich Results Types</span
+                            >
+                        </div>
+                        <div class="p-3.5 flex-1">
+                            <ul
+                                id="seoModalRichResults"
+                                class="space-y-1 text-xs font-semibold text-slate-700"
+                            >
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Referring URLs Card -->
+                    <div
+                        class="border border-slate-100 rounded-xl overflow-hidden shadow-sm flex flex-col bg-white"
+                    >
+                        <div
+                            class="bg-[#f8fafc] px-4 py-2 border-b border-slate-100"
+                        >
+                            <span
+                                class="text-[10px] font-bold text-[#475569] uppercase tracking-wider"
+                                >Referring Discovery URLs</span
+                            >
+                        </div>
+                        <div class="p-3.5 flex-1">
+                            <ul
+                                id="seoModalReferringUrls"
+                                class="space-y-1 text-xs font-semibold text-slate-700 max-h-36 overflow-y-auto"
+                            >
+                                <li>-</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div
+            class="px-6 py-4 border-t border-slate-100 bg-[#f8fafc] flex flex-col sm:flex-row sm:justify-between items-center gap-3 shrink-0"
+        >
+            <div>
+                <a
+                    id="seoModalConsoleLink"
+                    href="https://search.google.com/search-console"
+                    target="_blank"
+                    class="inline-flex items-center gap-1.5 text-xs font-bold text-[#1a73e8] hover:underline"
+                >
+                    <svg
+                        class="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                        ></path>
+                    </svg>
+                    Open in Search Console
+                </a>
+            </div>
+            <div class="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+                <button
+                    type="button"
+                    onclick="closeSeoModal()"
+                    class="px-4 py-2 text-xs font-semibold text-[#475569] hover:bg-slate-200 bg-slate-100 rounded-lg transition-colors cursor-pointer w-full sm:w-auto"
+                >
+                    Close
+                </button>
+                <button
+                    type="button"
+                    id="seoModalRefreshBtn"
+                    class="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#1a73e8] hover:bg-[#1e40af] rounded-lg shadow-sm transition-all cursor-pointer w-full sm:w-auto disabled:opacity-50"
+                >
+                    <span>Request Refresh</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script is:inline>
+    (function () {
+        let currentUrl = "";
+        const overlay = document.getElementById("seoModalOverlay");
+        const container = document.getElementById("seoModalContainer");
+        const skeleton = document.getElementById("seoModalSkeleton");
+        const content = document.getElementById("seoModalContent");
+        const refreshBtn = document.getElementById("seoModalRefreshBtn");
+        const refreshIcon = document.getElementById("seoModalRefreshIcon");
+
+        // Close functions
+        window.closeSeoModal = function () {
+            if (!overlay) return;
+            overlay.classList.add("opacity-0");
+            container.classList.add("scale-95");
+            setTimeout(() => {
+                overlay.classList.add("hidden");
+                overlay.classList.remove("flex");
+            }, 300);
+        };
+
+        // Open functions
+        window.openSeoModal = async function (event, url) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (!url) return;
+            currentUrl = url;
+
+            // Open Modal with Backdrop loading
+            overlay.classList.remove("hidden");
+            overlay.classList.add("flex");
+            void overlay.offsetWidth; // Force reflow
+            overlay.classList.remove("opacity-0");
+            container.classList.remove("scale-95");
+
+            // Show skeleton loader
+            skeleton.classList.remove("hidden");
+            content.classList.add("hidden");
+            refreshBtn.disabled = true;
+
+            // Try loading from localStorage first
+            const cacheData = localStorage.getItem("seo_cache_data");
+            let cachedResult = null;
+            if (cacheData) {
+                try {
+                    const cache = JSON.parse(cacheData);
+                    if (cache && cache.urls && cache.urls[url]) {
+                        cachedResult = cache.urls[url];
+                    }
+                } catch(e) {}
+            }
+
+            if (cachedResult) {
+                populateModalData(cachedResult);
+            } else {
+                // Fetch cached status from API as fallback
+                try {
+                    const res = await fetch(
+                        `/api/google/inspect?url=${encodeURIComponent(url)}`,
+                    );
+                    if (!res.ok) throw new Error("Failed to fetch cache status");
+                    const data = await res.json();
+
+                    if (data.success && data.result) {
+                        populateModalData(data.result);
+                    } else {
+                        throw new Error(data.error || "Inspection read failed");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    // Gracefully populate with placeholders, enabling Request Refresh
+                    populateModalData({
+                        url: url,
+                        status: "unknown",
+                        coverage: "Not inspected yet (no cached data in browser)",
+                        lastCrawl: null,
+                        robots: "Unknown",
+                        indexing: "Unknown",
+                        pageFetchStatus: "Unknown",
+                        mobile: "Neutral",
+                        userCanonical: "Unknown",
+                        googleCanonical: "Unknown",
+                        richResults: [],
+                        referringUrls: [],
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            }
+        };
+
+        function populateModalData(result) {
+            document.getElementById("seoModalUrl").textContent = result.url;
+            document.getElementById("seoModalUrl").href = result.url;
+
+            // Verdict badge styling
+            const badge = document.getElementById("seoModalVerdictBadge");
+            const dot = document.getElementById("seoModalVerdictDot");
+            const text = document.getElementById("seoModalVerdictText");
+
+            let badgeClass = "";
+            let dotClass = "";
+            let verdictLabel = "";
+
+            const status = result.status;
+            if (status === "indexed") {
+                badgeClass = "bg-[#d1fae5] text-[#059669] border-[#a7f3d0]";
+                dotClass = "bg-[#059669]";
+                verdictLabel = "Indexed";
+            } else if (status === "pending") {
+                badgeClass = "bg-[#fef3c7] text-[#d97706] border-[#fde68a]";
+                dotClass = "bg-[#d97706]";
+                verdictLabel = "Pending";
+            } else if (status === "crawled") {
+                badgeClass = "bg-[#ffedd5] text-[#ea580c] border-[#fed7aa]";
+                dotClass = "bg-[#ea580c]";
+                verdictLabel = "Crawled";
+            } else if (status === "error") {
+                badgeClass = "bg-[#fee2e2] text-[#dc2626] border-[#fecaca]";
+                dotClass = "bg-[#dc2626]";
+                verdictLabel = "Error";
+            } else {
+                badgeClass = "bg-[#f1f5f9] text-[#64748b] border-[#e2e8f0]";
+                dotClass = "bg-[#64748b]";
+                verdictLabel = "Unknown";
+            }
+
+            badge.className = `inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${badgeClass}`;
+            dot.className = `w-1.5 h-1.5 rounded-full ${dotClass}`;
+            text.textContent = verdictLabel;
+
+            // Simple text mappings
+            document.getElementById("seoModalCoverage").textContent =
+                result.coverage || "Unknown";
+
+            // Date formatting
+            const crawlTime = result.lastCrawl;
+            if (crawlTime) {
+                const date = new Date(crawlTime);
+                document.getElementById("seoModalLastCrawl").textContent =
+                    isNaN(date.getTime())
+                        ? crawlTime
+                        : date.toLocaleString("en-IN", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                          });
+            } else {
+                document.getElementById("seoModalLastCrawl").textContent =
+                    "Never crawled";
+            }
+
+            document.getElementById("seoModalRobots").textContent =
+                result.robots || "Unknown";
+            document.getElementById("seoModalIndexing").textContent =
+                result.indexing || "Unknown";
+            document.getElementById("seoModalPageFetch").textContent =
+                result.pageFetchStatus || "Unknown";
+            document.getElementById("seoModalMobile").textContent =
+                result.mobile || "Neutral";
+            document.getElementById("seoModalUserCanonical").textContent =
+                result.userCanonical || "Not declared";
+            document.getElementById("seoModalGoogleCanonical").textContent =
+                result.googleCanonical || "None selected";
+
+            // Detected Items (Rich Results list)
+            const richList = document.getElementById("seoModalRichResults");
+            richList.innerHTML = "";
+            if (result.richResults && result.richResults.length > 0) {
+                result.richResults.forEach((item) => {
+                    const li = document.createElement("li");
+                    li.className = "flex items-center gap-1.5 text-[#059669]";
+                    li.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>${item}`;
+                    richList.appendChild(li);
+                });
+            } else {
+                const li = document.createElement("li");
+                li.className = "text-slate-400 font-normal italic";
+                li.textContent = "None detected";
+                richList.appendChild(li);
+            }
+
+            // Referring URLs List
+            const refList = document.getElementById("seoModalReferringUrls");
+            refList.innerHTML = "";
+            if (result.referringUrls && result.referringUrls.length > 0) {
+                result.referringUrls.forEach((url) => {
+                    const li = document.createElement("li");
+                    li.className = "truncate";
+                    li.innerHTML = `<a href="${url}" target="_blank" class="hover:underline text-[#1a73e8] font-normal block truncate" title="${url}">${url}</a>`;
+                    refList.appendChild(li);
+                });
+            } else {
+                const li = document.createElement("li");
+                li.className = "text-slate-400 font-normal italic";
+                li.textContent = "None detected";
+                refList.appendChild(li);
+            }
+
+            // Subtitle updated timestamp
+            const updatedDate = new Date(result.updatedAt);
+            document.getElementById("seoModalHeaderSub").textContent =
+                `Last Checked: ${
+                    isNaN(updatedDate.getTime())
+                        ? "Recently"
+                        : updatedDate.toLocaleTimeString()
+                }`;
+
+            // Search Console external link
+            if (result.inspectionResultLink) {
+                document.getElementById("seoModalConsoleLink").href =
+                    result.inspectionResultLink;
+                document
+                    .getElementById("seoModalConsoleLink")
+                    .classList.remove("opacity-50", "pointer-events-none");
+            } else {
+                // Default search console search view
+                document.getElementById("seoModalConsoleLink").href =
+                    `https://search.google.com/search-console?resource_id=${encodeURIComponent(result.siteUrl || result.url)}`;
+            }
+
+            // Show real content, enable buttons
+            skeleton.classList.add("hidden");
+            content.classList.remove("hidden");
+            refreshBtn.disabled = false;
+        }
+
+        // Live Refresh call
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", async () => {
+                if (!currentUrl) return;
+
+                const originalBtnHtml = refreshBtn.innerHTML;
+                refreshBtn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Inspecting...`;
+                refreshBtn.disabled = true;
+
+                try {
+                    const res = await fetch("/api/google/refresh", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ url: currentUrl }),
+                    });
+
+                    const data = await res.json();
+
+                    if (res.ok && data.success && data.result) {
+                        // Update localStorage cache
+                        const cacheData = localStorage.getItem("seo_cache_data");
+                        let cache = { lastSync: null, urls: {} };
+                        if (cacheData) {
+                            try {
+                                cache = JSON.parse(cacheData) || cache;
+                            } catch (e) {}
+                        }
+                        cache.urls[currentUrl] = data.result;
+                        localStorage.setItem("seo_cache_data", JSON.stringify(cache));
+
+                        populateModalData(data.result);
+                        if (window.showToast)
+                            window.showToast(
+                                "Successfully refreshed SEO status!",
+                                "success",
+                            );
+
+                        // Dynamically update the row badges on the parent page
+                        const badges = document.querySelectorAll(
+                            `.seo-badge[data-url="${currentUrl}"]`,
+                        );
+                        badges.forEach((badge) => {
+                            updateRowBadge(badge, data.result.status);
+                        });
+
+                        // Re-hydrate page bindings
+                        if (window.hydrateGscBadges) {
+                            window.hydrateGscBadges();
+                        }
+                        if (window.hydrateIndexGsc) {
+                            window.hydrateIndexGsc();
+                        }
+                    } else {
+                        throw new Error(
+                            data.error || "Failed to refresh SEO data",
+                        );
+                    }
+                } catch (err) {
+                    console.error(err);
+                    if (window.showToast)
+                        window.showToast(
+                            err.message || "Google Search Console call failed.",
+                            "error",
+                        );
+                } finally {
+                    refreshBtn.innerHTML = originalBtnHtml;
+                    refreshBtn.disabled = false;
+                }
+            });
+        }
+
+        // Function to update the page row badges without page refresh
+        function updateRowBadge(badgeElement, newStatus) {
+            let badgeClass = "";
+            let dotClass = "";
+            let label = "Unknown";
+
+            if (newStatus === "indexed") {
+                badgeClass = "bg-[#d1fae5] text-[#059669] border-[#a7f3d0]";
+                dotClass = "bg-[#059669]";
+                label = "Indexed";
+            } else if (newStatus === "pending") {
+                badgeClass = "bg-[#fef3c7] text-[#d97706] border-[#fde68a]";
+                dotClass = "bg-[#d97706]";
+                label = "Pending";
+            } else if (newStatus === "crawled") {
+                badgeClass = "bg-[#ffedd5] text-[#ea580c] border-[#fed7aa]";
+                dotClass = "bg-[#ea580c]";
+                label = "Crawled";
+            } else if (newStatus === "error") {
+                badgeClass = "bg-[#fee2e2] text-[#dc2626] border-[#fecaca]";
+                dotClass = "bg-[#dc2626]";
+                label = "Error";
+            } else {
+                badgeClass = "bg-[#f1f5f9] text-[#64748b] border-[#e2e8f0]";
+                dotClass = "bg-[#64748b]";
+                label = "Unknown";
+            }
+
+            // If it's a mobile badge, we prefix with "SEO: "
+            const isMobile = badgeElement.classList.contains("px-2"); // mobile uses px-2, desktop uses px-2.5
+            const displayText = isMobile ? `SEO: ${label}` : label;
+
+            badgeElement.className = `seo-badge inline-flex items-center rounded-full font-medium border cursor-pointer transition-all hover:opacity-80 active:scale-95 ${
+                isMobile
+                    ? "gap-1 px-2 py-0.5 text-[10px]"
+                    : "gap-1.5 px-2.5 py-1 text-xs"
+            } ${badgeClass}`;
+
+            badgeElement.innerHTML = `
+                <svg class="${isMobile ? "w-3 h-3" : "w-3.5 h-3.5"} shrink-0" viewBox="0 0 157.7 157.7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fill="#fbbc04" d="M33.2,132.6l-23.7,23.7c-1.8,1.8-4.8,1.8-6.6,0l-1.5-1.5c-1.8-1.8-1.8-4.8,0-6.6l23.7-23.7c1.8-1.8,4.8-1.8,6.6,0l1.5,1.5c1.8,1.8,1.8,4.8,0,6.6h0Z"/>
+                    <path fill="#4285f4" d="M96.9,142.5h30.4c16.8,0,30.4-13.6,30.4-30.4V30.4c0-16.8-13.6-30.4-30.4-30.4h0c-16.8,0-30.4,13.6-30.4,30.4v112.1h0Z"/>
+                    <path fill="#fbbc04" d="M46.6,142.5c16.8,0,30.4-13.6,30.4-30.4h0c0-16.8-13.6-30.4-30.4-30.4h0c-16.8,0-30.4,13.6-30.4,30.4h0c0,16.8,13.6,30.4,30.4,30.4h0Z"/>
+                    <path fill="#34a853" d="M118.1,142.5h-29.6c-16.8,0-30.4-13.6-30.4-30.4v-39.8c0-16.8,13.6-30.4,30.4-30.4h0c16.8,0,30.4,13.6,30.4,30.4v69.4c0,.4-.3.8-.8.8h0Z"/>
+                    <path fill="#1967d2" d="M118.9,141.7v-69.4c0-13.5-9-25.5-22-29.2v99.4h21.2c.4,0,.8-.3.8-.8h0Z"/>
+                    <path fill="#ea4335" d="M77,112.7c0-12.3-7.4-23.4-18.9-28.1v28.1c0,8.7,3.6,16.5,9.4,22,6-5.7,9.4-13.7,9.4-22Z"/>
+                </svg>
+                ${displayText}
+            `;
+        }
+
+        // Close on ESC or click outside
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closeSeoModal();
+        });
+        if (overlay) {
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeSeoModal();
+            });
+        }
+    })();
+</script>

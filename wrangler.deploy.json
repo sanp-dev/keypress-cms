@@ -1,0 +1,60 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "demo-cms-quicdecode",
+	"main": "dist/server/entry.mjs",
+	"assets": {
+		"directory": "dist/client",
+		"binding": "ASSETS"
+	},
+	"compatibility_date": "2026-06-20",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"workers_dev": true,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"IMAGE_PUBLIC_BASE_URL": "https://images.YOUR-DOMAIN.com",
+		"BLOG_BASE_URL": "https://YOUR-BLOG-DOMAIN.com",
+		"CF_ZONE_TAG": "YOUR_CF_ZONE_TAG",
+		"BING_INDEXNOW_KEY": "YOUR_BING_INDEXNOW_KEY",
+		"VID_PUBLIC_BASE_URL": "https://cdn.YOUR-DOMAIN.com",
+		"CRON_SECRET": "YOUR_RANDOM_CRON_SECRET"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "CACHE_KV",
+			"id": "YOUR_CACHE_KV_NAMESPACE_ID"
+		},
+		{
+			"binding": "SESSION",
+			"id": "YOUR_SESSION_NAMESPACE_ID"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "IMG_BUCKET",
+			"bucket_name": "qd-images"
+		},
+		{
+			"binding": "STORY_BUCKET",
+			"bucket_name": "qd-stories"
+		},
+		{
+			"binding": "VID_BUCKET",
+			"bucket_name": "qd-videos"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "qd-cms-db",
+			"database_id": "YOUR_D1_DATABASE_ID"
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	}
+}

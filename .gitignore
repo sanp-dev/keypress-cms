@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Astro build output
+dist/
+.astro/
+
+# Wrangler state
+.wrangler/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs and system artifacts
+*.log
+.DS_Store
+Thumbs.db

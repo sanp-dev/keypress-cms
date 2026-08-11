@@ -1,0 +1,270 @@
+---
+// src/components/VideoModal.astro
+// Self-contained Video Insert modal — imported into write.astro
+// No props needed; all interaction is via window functions exposed below.
+---
+
+<!-- ─── Video Insert Modal ─────────────────────────────────────────────────── -->
+<div id="videoModalOverlay" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden z-[90] transition-opacity duration-300" onclick="closeVideoModal()"></div>
+
+<div id="videoModal" class="fixed inset-0 m-auto hidden z-[100] bg-white rounded-2xl shadow-2xl w-[95vw] max-w-lg flex-col overflow-hidden h-fit max-h-[90vh]">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-[#e2e8f0] bg-[#f8fafc] shrink-0">
+        <h3 class="font-bold text-[#1e293b] text-sm uppercase tracking-wide flex items-center gap-2">
+            <svg class="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M10 16.5l6-4.5-6-4.5v9zm11-13H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5.5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/></svg>
+            Insert Video
+        </h3>
+        <button type="button" onclick="closeVideoModal()" class="text-[#94a3b8] hover:text-[#dc2626] text-2xl leading-none transition-colors" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="p-5 overflow-y-auto">
+        <!-- Source Tabs -->
+        <div class="flex gap-1 mb-4 bg-[#f1f5f9] rounded-lg p-1">
+            <button type="button" data-vsource="youtube" onclick="switchVideoSource('youtube')"
+                class="vid-tab-btn flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors bg-white text-[#1a73e8] shadow-sm">
+                YouTube
+            </button>
+            <button type="button" data-vsource="gdrive" onclick="switchVideoSource('gdrive')"
+                class="vid-tab-btn flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors text-[#64748b] hover:text-[#1e293b]">
+                Google Drive
+            </button>
+            <button type="button" data-vsource="r2" onclick="switchVideoSource('r2')"
+                class="vid-tab-btn flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors text-[#64748b] hover:text-[#1e293b]">
+                CF R2 / Direct
+            </button>
+        </div>
+
+        <!-- YouTube pane -->
+        <div id="vid-pane-youtube" class="vid-pane space-y-3">
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">YouTube Video URL or ID</label>
+                <input type="text" id="vidYtUrl" placeholder="https://www.youtube.com/watch?v=... or video ID"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Video Title (shown as caption)</label>
+                <input type="text" id="vidYtTitle" placeholder="e.g. How to use Python in 10 minutes"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Custom Thumbnail URL (optional)</label>
+                <input type="url" id="vidYtThumb" placeholder="https://... (leave blank for auto YouTube thumb)"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+        </div>
+
+        <!-- Google Drive pane -->
+        <div id="vid-pane-gdrive" class="vid-pane hidden space-y-3">
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Google Drive Share Link</label>
+                <input type="url" id="vidGdUrl" placeholder="https://drive.google.com/file/d/FILE_ID/view"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Video Title</label>
+                <input type="text" id="vidGdTitle" placeholder="Video title"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Thumbnail URL (optional)</label>
+                <input type="url" id="vidGdThumb" placeholder="https://..."
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <p class="text-xs text-[#94a3b8]">⚠️ Make sure the file is shared as "Anyone with the link can view".</p>
+        </div>
+
+        <!-- CF R2 / Direct pane -->
+        <div id="vid-pane-r2" class="vid-pane hidden space-y-3">
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Video URL (R2 / CDN / Direct Link)</label>
+                <input type="url" id="vidR2Url" placeholder="https://cdn.yourdomain.com/videos/my-video.mp4"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Video Title</label>
+                <input type="text" id="vidR2Title" placeholder="Video title"
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-[#475569] mb-1 block">Thumbnail URL (optional)</label>
+                <input type="url" id="vidR2Thumb" placeholder="https://..."
+                    class="w-full border border-[#cbd5e1] rounded-lg px-3 py-2 text-sm focus:border-[#1a73e8] focus:outline-none" />
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div id="videoPreviewWrap" class="hidden mt-4 rounded-xl overflow-hidden border border-[#e2e8f0] bg-[#f8fafc]">
+            <p class="text-xs font-semibold text-[#64748b] px-3 pt-2 pb-1">Preview</p>
+            <div id="videoPreviewBody" class="px-3 pb-3"></div>
+        </div>
+    </div>
+
+    <div class="bg-[#f8fafc] px-5 py-3.5 border-t border-[#e2e8f0] flex justify-between items-center shrink-0">
+        <button type="button" onclick="previewVideoModal()"
+            class="px-4 py-2 text-xs font-semibold text-[#475569] border border-[#cbd5e1] rounded-lg hover:bg-[#e2e8f0] transition-colors">
+            Preview
+        </button>
+        <div class="flex gap-2">
+            <button type="button" onclick="closeVideoModal()"
+                class="px-4 py-2 text-xs font-semibold text-[#475569] hover:bg-[#e2e8f0] rounded-lg transition-colors">
+                Cancel
+            </button>
+            <button type="button" onclick="insertVideoFromModal()"
+                class="px-5 py-2 text-xs font-semibold text-white bg-[#1a73e8] hover:bg-[#1557b0] rounded-lg transition-colors shadow-sm">
+                Insert Video
+            </button>
+        </div>
+    </div>
+</div>
+
+<script is:inline>
+// ─── Video Modal Controller ──────────────────────────────────────────────────
+// All functions are exposed on window so write.astro can call them.
+
+let _currentVideoSource = 'youtube';
+
+window.openVideoModal = function() {
+    document.getElementById('videoModalOverlay').classList.remove('hidden');
+    document.getElementById('videoModal').classList.remove('hidden');
+    document.getElementById('videoModal').classList.add('flex');
+    document.getElementById('videoPreviewWrap').classList.add('hidden');
+};
+
+window.closeVideoModal = function() {
+    document.getElementById('videoModalOverlay').classList.add('hidden');
+    document.getElementById('videoModal').classList.add('hidden');
+    document.getElementById('videoModal').classList.remove('flex');
+};
+
+window.switchVideoSource = function(src) {
+    _currentVideoSource = src;
+    document.querySelectorAll('.vid-pane').forEach(p => p.classList.add('hidden'));
+    document.getElementById('vid-pane-' + src).classList.remove('hidden');
+    document.querySelectorAll('.vid-tab-btn').forEach(b => {
+        const active = b.dataset.vsource === src;
+        b.classList.toggle('bg-white', active);
+        b.classList.toggle('text-[#1a73e8]', active);
+        b.classList.toggle('shadow-sm', active);
+        b.classList.toggle('text-[#64748b]', !active);
+    });
+    document.getElementById('videoPreviewWrap').classList.add('hidden');
+};
+
+function _getVideoInputs() {
+    const s = _currentVideoSource;
+    if (s === 'youtube') {
+        return {
+            url: (document.getElementById('vidYtUrl').value || '').trim(),
+            title: (document.getElementById('vidYtTitle').value || '').trim() || 'Watch Video',
+            thumb: (document.getElementById('vidYtThumb').value || '').trim(),
+            source: 'youtube'
+        };
+    } else if (s === 'gdrive') {
+        return {
+            url: (document.getElementById('vidGdUrl').value || '').trim(),
+            title: (document.getElementById('vidGdTitle').value || '').trim() || 'Watch Video',
+            thumb: (document.getElementById('vidGdThumb').value || '').trim(),
+            source: 'gdrive'
+        };
+    } else {
+        return {
+            url: (document.getElementById('vidR2Url').value || '').trim(),
+            title: (document.getElementById('vidR2Title').value || '').trim() || 'Watch Video',
+            thumb: (document.getElementById('vidR2Thumb').value || '').trim(),
+            source: 'r2'
+        };
+    }
+}
+
+function _buildVideoHTML(opts) {
+    const { url, title, thumb, source } = opts;
+    if (!url) return null;
+
+    let embedSrc = url;
+    let thumbUrl = thumb;
+
+    if (source === 'youtube') {
+        const idMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+        const videoId = idMatch ? idMatch[1] : url.replace(/^https?:\/\//, '').split('/').pop();
+        embedSrc = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+        thumbUrl = thumbUrl || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+    } else if (source === 'gdrive') {
+        const idMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = idMatch ? idMatch[1] : url;
+        embedSrc = `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+
+    const thumbHTML = thumbUrl
+        ? `<img src="${thumbUrl}" alt="${title}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block">`
+        : `<div style="aspect-ratio:16/9;background:#1e293b;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:.9rem;width:100%">Click to play</div>`;
+
+    return `<div class="tsa-video-wrap" data-src="${embedSrc}">
+  <div class="tsa-video-thumb" role="button" tabindex="0" aria-label="Play: ${title}">
+    ${thumbHTML}
+    <div class="tsa-play-btn">
+      <div class="tsa-play-circle">
+        <svg viewBox="0 0 24 24" fill="#1a73e8" style="width:28px;height:28px;margin-left:4px"><path d="M8 5v14l11-7z"/></svg>
+      </div>
+    </div>
+    <div class="tsa-video-title">${title}</div>
+  </div>
+  <div class="tsa-video-iframe-wrap"></div>
+</div>`;
+}
+
+window.previewVideoModal = function() {
+    const opts = _getVideoInputs();
+    if (!opts.url) {
+        alert('Please enter a video URL first.');
+        return;
+    }
+    const html = _buildVideoHTML(opts);
+    if (!html) return;
+    const wrap = document.getElementById('videoPreviewWrap');
+    const body = document.getElementById('videoPreviewBody');
+    body.innerHTML = html;
+    wrap.classList.remove('hidden');
+    // Re-init the click handlers for preview
+    body.querySelectorAll('.tsa-video-wrap').forEach(function(w) {
+        w.querySelector('.tsa-video-thumb').addEventListener('click', function() {
+            const src = w.dataset.src;
+            const iw = w.querySelector('.tsa-video-iframe-wrap');
+            const iframe = document.createElement('iframe');
+            iframe.src = src;
+            iframe.allow = 'accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture';
+            iframe.allowFullscreen = true;
+            iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none';
+            iw.innerHTML = '';
+            iw.appendChild(iframe);
+            w.classList.add('tsa-active');
+        });
+    });
+};
+
+window.insertVideoFromModal = function() {
+    const opts = _getVideoInputs();
+    if (!opts.url) {
+        alert('Please enter a video URL.');
+        return;
+    }
+
+    const videoHTML = _buildVideoHTML(opts);
+    if (!videoHTML) return;
+
+    // Insert into active editor tab + ensure VIDEO_CSS is prepended
+    const VIDEO_STYLE_MARKER = '<!-- tsa-video-styles -->';
+    
+    // Call write.astro's insertRichBlock function (exposed on window)
+    if (typeof window.insertRichBlock === 'function') {
+        window.insertRichBlock(videoHTML, VIDEO_STYLE_MARKER, window._VIDEO_CSS || '');
+    }
+
+    closeVideoModal();
+};
+
+// Keyboard: Escape closes modal
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && !document.getElementById('videoModal').classList.contains('hidden')) {
+        closeVideoModal();
+    }
+});
+</script>

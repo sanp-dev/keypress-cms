@@ -1,0 +1,2005 @@
+---
+// src/pages/messaging.astro
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import { sitesConfig, getActiveSite } from "../config/sitesConfig";
+import { getPostsCatalog } from "../lib/github";
+import { env } from "cloudflare:workers";
+
+const activeSite = getActiveSite();
+const token = env?.GITHUB_PAT || import.meta.env.GITHUB_PAT;
+const { posts } = await getPostsCatalog(
+    activeSite.githubOwner,
+    activeSite.githubRepo,
+    activeSite.contentPath,
+    token,
+    activeSite.branch,
+    env?.CACHE_KV,
+);
+
+// Sort posts by publish date (most recent first)
+posts.sort((a: any, b: any) => {
+    const timeA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const timeB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+    if (timeA === timeB) {
+        return (b.slug || "").localeCompare(a.slug || "");
+    }
+    return timeB - timeA;
+});
+
+// Fetch subscriber count from D1
+let subscriberCount = 0;
+try {
+    if (env?.DB) {
+        const result = await env.DB.prepare(
+            "SELECT COUNT(*) as count FROM push_subscribers",
+        ).first();
+        subscriberCount = (result as any)?.count || 0;
+    }
+} catch (e) {
+    console.error("Failed to fetch subscriber count:", e);
+}
+
+function formatPublishDate(iso: string | null) {
+    if (!iso) return "···";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+    });
+}
+---
+
+<DashboardLayout title="Messaging">
+    <style>
+        /* ─── Tab System ──────────────────────── */
+        .msg-tab-bar {
+            display: flex;
+            border-bottom: 2px solid #e2e8f0;
+            background: #f8fafc;
+        }
+        .msg-tab-btn {
+            padding: 0.75rem 1.25rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #64748b;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+        }
+        .msg-tab-btn:hover {
+            color: #1e293b;
+            background: #f1f5f9;
+        }
+        .msg-tab-btn.active {
+            color: #1a73e8;
+            border-bottom-color: #1a73e8;
+        }
+        .msg-tab-content {
+            display: none;
+        }
+        .msg-tab-content.active {
+            display: block;
+        }
+
+        /* ─── Console Panel ───────────────────── */
+        .console-panel {
+            background: #0f172a;
+            border-radius: 0 0 0.75rem 0.75rem;
+            min-height: 300px;
+            max-height: calc(100vh - 20rem);
+            display: flex;
+            flex-direction: column;
+        }
+        .console-header {
+            background: #1e293b;
+            padding: 0.75rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            flex-shrink: 0;
+        }
+        .console-header span {
+            color: #94a3b8;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            font-family:
+                "Cascadia Code", "Fira Code", "JetBrains Mono", "SF Mono",
+                monospace;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .console-header span::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #34d399;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        .console-clear-btn {
+            background: #334155;
+            color: #94a3b8;
+            border: none;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .console-clear-btn:hover {
+            background: #475569;
+            color: #e2e8f0;
+        }
+        .console-body {
+            padding: 1rem;
+            overflow-y: auto;
+            flex: 1;
+            font-family:
+                "Cascadia Code", "Fira Code", "JetBrains Mono", "SF Mono",
+                monospace;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+        }
+        .console-empty {
+            color: #475569;
+            text-align: center;
+            padding: 3rem 1rem;
+        }
+        .console-empty svg {
+            margin: 0 auto 1rem;
+            opacity: 0.3;
+        }
+        :global(.log-entry) {
+            animation: logFadeIn 0.3s ease;
+            padding: 2px 0;
+        }
+        :global(.log-ts) {
+            color: #94a3b8;
+        }
+        :global(.log-info) {
+            color: #93c5fd;
+        }
+        :global(.log-success) {
+            color: #86efac;
+        }
+        :global(.log-error) {
+            color: #fca5a5;
+        }
+        :global(.log-cleanup) {
+            color: #c084fc;
+        }
+
+        @keyframes logFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(4px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* ─── Console Badge ───────────────────── */
+        .console-badge {
+            background: #ef4444;
+            color: white;
+            font-size: 0.625rem;
+            font-weight: 700;
+            min-width: 1.125rem;
+            height: 1.125rem;
+            padding: 0 0.3rem;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+        .console-badge.empty {
+            display: none;
+        }
+
+        /* ─── Action Buttons ──────────────────── */
+        .send-push-btn {
+            background: linear-gradient(135deg, #1a73e8 0%, #1e40af 100%);
+            color: white;
+            border: none;
+            padding: 0.375rem 0.875rem;
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .send-push-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
+        }
+        .send-push-btn:active {
+            transform: translateY(0);
+        }
+        .send-push-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .edit-notif-btn {
+            background: white;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+            padding: 0.375rem 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .edit-notif-btn:hover {
+            border-color: #cbd5e1;
+            background: #f8fafc;
+        }
+        .edit-notif-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ─── Modal ───────────────────────────── */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: overlayIn 0.2s ease;
+        }
+        .modal-overlay.hidden {
+            display: none;
+        }
+        .modal-card {
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            max-width: 36rem;
+            width: 100%;
+            margin: 1rem;
+            animation: modalSlideUp 0.3s ease;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        .modal-close-btn {
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.5rem;
+            border: none;
+            background: none;
+            color: #94a3b8;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-close-btn:hover {
+            background: #f1f5f9;
+            color: #475569;
+        }
+        .modal-body {
+            padding: 1.5rem;
+        }
+        .modal-field {
+            margin-bottom: 1.25rem;
+        }
+        .modal-field label {
+            display: block;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: #475569;
+            margin-bottom: 0.375rem;
+        }
+        .modal-field input,
+        .modal-field textarea {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            color: #1e293b;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+        .modal-field input:focus,
+        .modal-field textarea:focus {
+            outline: none;
+            border-color: #1a73e8;
+            box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+        }
+        .modal-field textarea {
+            resize: vertical;
+            min-height: 5rem;
+        }
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+        .modal-cancel-btn {
+            padding: 0.5rem 1.25rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #475569;
+            background: white;
+            border: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-cancel-btn:hover {
+            background: #f8fafc;
+        }
+        .modal-send-btn {
+            padding: 0.5rem 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(135deg, #1a73e8 0%, #1e40af 100%);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .modal-send-btn:hover {
+            opacity: 0.9;
+        }
+        .modal-send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        @keyframes overlayIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        @keyframes modalSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ─── Subscriber Badge ────────────────── */
+        .subscriber-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.875rem;
+            border-radius: 999px;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #dbeafe, #ede9fe);
+            color: #4338ca;
+            border: 1px solid #c7d2fe;
+        }
+
+        /* ─── Sent status inline ─────────────── */
+        .sent-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.6875rem;
+            color: #059669;
+            font-weight: 600;
+            animation: logFadeIn 0.3s ease;
+        }
+        .sent-indicator-container.hidden {
+            display: none !important;
+        }
+
+        /* ─── Responsive ──────────────────────── */
+        @media (max-width: 640px) {
+            .msg-actions-cell {
+                display: flex;
+                flex-direction: column;
+                gap: 0.375rem;
+            }
+            .send-push-btn,
+            .edit-notif-btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* ─── Spinner ─────────────────────────── */
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+
+    <div
+        class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] overflow-hidden flex flex-col sm:h-[calc(100vh-8rem)]"
+    >
+        <!-- Header -->
+        <div
+            class="p-4 sm:p-5 border-b border-[#e2e8f0] bg-[#f8fafc] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 sm:shrink-0"
+        >
+            <div>
+                <h2
+                    class="text-lg font-bold text-[#1e293b] flex items-center gap-2"
+                >
+                    <svg
+                        class="w-5 h-5 text-[#1a73e8]"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                        ></path>
+                    </svg>
+                    Push Notifications
+                </h2>
+                <p class="text-sm text-[#64748b] mt-1">
+                    Send push notifications to your subscribers for any
+                    published article.
+                </p>
+            </div>
+            <div
+                class="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto"
+            >
+                <span class="subscriber-badge">
+                    <svg
+                        class="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                        ></path>
+                    </svg>
+                    <span id="subscriberCountText"
+                        >{subscriberCount.toLocaleString()}</span
+                    > subscribers
+                </span>
+                <div class="relative w-full sm:w-56">
+                    <div
+                        class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"
+                    >
+                        <svg
+                            class="w-4 h-4 text-gray-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                            ></path>
+                        </svg>
+                    </div>
+                    <input
+                        type="text"
+                        id="msgSearchInput"
+                        class="block w-full pl-10 pr-3 py-2 border border-[#e2e8f0] rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:border-[#1a73e8] focus:ring-1 focus:ring-[#1a73e8] sm:text-sm transition-colors"
+                        placeholder="Search posts..."
+                    />
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Bar -->
+        <div class="msg-tab-bar sm:shrink-0">
+            <button
+                class="msg-tab-btn active"
+                data-tab="posts"
+                onclick="switchMsgTab('posts')"
+            >
+                <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"
+                    ></path>
+                </svg>
+                Posts
+            </button>
+            <button
+                class="msg-tab-btn"
+                data-tab="console"
+                onclick="switchMsgTab('console')"
+            >
+                <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                    ></path>
+                </svg>
+                Console
+                <span id="consoleBadge" class="console-badge empty">0</span>
+            </button>
+        </div>
+
+        <!-- Posts Tab -->
+        <div
+            id="msgTabPosts"
+            class="msg-tab-content active overflow-auto flex-1"
+        >
+            <table class="w-full text-left border-collapse">
+                <thead
+                    class="sticky top-0 bg-white z-10 shadow-sm border-b border-[#e2e8f0]"
+                >
+                    <tr class="text-[#64748b] text-xs uppercase tracking-wider">
+                        <th class="pl-3 pr-2 py-3 sm:py-4 font-medium w-[5%]"
+                            >#</th
+                        >
+                        <th
+                            class="px-3 sm:px-4 py-3 sm:py-4 font-medium w-[50%]"
+                            >Post</th
+                        >
+                        <th
+                            class="px-3 sm:px-4 py-3 sm:py-4 font-medium w-[15%] hidden sm:table-cell"
+                            style="position: relative; left: -40px;"
+                            >Published</th
+                        >
+                        <th
+                            class="px-3 sm:px-4 py-3 sm:py-4 font-medium text-right w-[30%]"
+                            >Actions</th
+                        >
+                    </tr>
+                </thead>
+                <tbody id="msgPostsBody" class="divide-y divide-[#e2e8f0]">
+                    {
+                        posts.length === 0 ? (
+                            <tr>
+                                <td
+                                    colspan="4"
+                                    class="px-6 py-12 text-center text-[#64748b]"
+                                >
+                                    <div class="text-4xl mb-3">📄</div>
+                                    <p class="font-medium">
+                                        No articles found.
+                                    </p>
+                                </td>
+                            </tr>
+                        ) : (
+                            posts.map((post, i) => (
+                                <tr
+                                    class="hover:bg-[#f8fafc] transition-colors msg-post-row"
+                                    data-slug={post.slug}
+                                    data-title={post.title || post.slug}
+                                >
+                                    <td class="pl-3 pr-2 py-3 sm:py-4">
+                                        <span class="text-xs font-bold text-[#94a3b8]">
+                                            {i + 1}
+                                        </span>
+                                    </td>
+                                    <td class="px-3 sm:px-4 py-3 sm:py-4">
+                                        <div
+                                            class="min-w-0"
+                                            style="max-width: 320px;"
+                                        >
+                                            <p
+                                                class="text-sm font-medium text-[#1e293b] truncate"
+                                                title={post.title || post.slug}
+                                            >
+                                                {(post.title || post.slug)
+                                                    .length > 55
+                                                    ? (
+                                                          post.title ||
+                                                          post.slug
+                                                      ).slice(0, 55) + "..."
+                                                    : post.title || post.slug}
+                                            </p>
+                                            <p class="text-xs text-[#64748b] font-mono mt-0.5 flex items-center gap-1.5">
+                                                <span class="truncate">
+                                                    {post.slug}
+                                                </span>
+                                                <a
+                                                    href={`${activeSite.url}/post/${post.slug}/`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    class="text-[#94a3b8] hover:text-[#1a73e8] transition-colors shrink-0"
+                                                    title="View live post"
+                                                >
+                                                    <svg
+                                                        class="w-3.5 h-3.5"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        viewBox="0 0 24 24"
+                                                    >
+                                                        <path
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                                        />
+                                                    </svg>
+                                                </a>
+                                            </p>
+                                            {/* Mobile: inline date & status indicator */}
+                                            <div class="text-xs text-[#94a3b8] mt-1 sm:hidden flex items-center gap-2 flex-wrap">
+                                                <span>
+                                                    {formatPublishDate(
+                                                        post.publishedAt,
+                                                    )}
+                                                </span>
+                                                <span
+                                                    class="sent-indicator-container hidden"
+                                                    data-sent-for={post.slug}
+                                                    style="display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap;"
+                                                >
+                                                    <span class="sent-indicator">
+                                                        <svg
+                                                            class="w-3.5 h-3.5"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            viewBox="0 0 24 24"
+                                                        >
+                                                            <path
+                                                                stroke-linecap="round"
+                                                                stroke-linejoin="round"
+                                                                stroke-width="2"
+                                                                d="M5 13l4 4L19 7"
+                                                            />
+                                                        </svg>
+                                                        Sent
+                                                    </span>
+                                                    <span
+                                                        class="sent-time"
+                                                        style="font-size: 0.6875rem; color: #94a3b8; font-weight: 500; font-family: monospace;"
+                                                    />
+                                                    <button
+                                                        class="cancel-schedule-btn"
+                                                        onclick={`cancelSchedule('${post.slug}', this)`}
+                                                        title="Cancel scheduled push"
+                                                        style="display: none; background: none; border: none; padding: 2px; color: #ef4444; cursor: pointer; align-items: center; justify-content: center; margin-left: 2px; transition: color 0.2s;"
+                                                    >
+                                                        <svg
+                                                            class="w-3.5 h-3.5 hover:scale-110"
+                                                            fill="none"
+                                                            stroke="currentColor"
+                                                            stroke-width="2.5"
+                                                            viewBox="0 0 24 24"
+                                                        >
+                                                            <path
+                                                                stroke-linecap="round"
+                                                                stroke-linejoin="round"
+                                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                                            />
+                                                        </svg>
+                                                    </button>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td
+                                        class="px-3 sm:px-4 py-3 sm:py-4 hidden sm:table-cell"
+                                        style="position: relative; left: -40px;"
+                                    >
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <p class="text-xs text-[#475569]">
+                                                {formatPublishDate(
+                                                    post.publishedAt,
+                                                )}
+                                            </p>
+                                            <span
+                                                class="sent-indicator-container hidden"
+                                                data-sent-for={post.slug}
+                                                style="display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap;"
+                                            >
+                                                <span class="sent-indicator">
+                                                    <svg
+                                                        class="w-3.5 h-3.5"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        viewBox="0 0 24 24"
+                                                    >
+                                                        <path
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M5 13l4 4L19 7"
+                                                        />
+                                                    </svg>
+                                                    Sent
+                                                </span>
+                                                <span
+                                                    class="sent-time"
+                                                    style="font-size: 0.6875rem; color: #94a3b8; font-weight: 500; font-family: monospace;"
+                                                />
+                                                <button
+                                                    class="cancel-schedule-btn"
+                                                    onclick={`cancelSchedule('${post.slug}', this)`}
+                                                    title="Cancel scheduled push"
+                                                    style="display: none; background: none; border: none; padding: 2px; color: #ef4444; cursor: pointer; align-items: center; justify-content: center; margin-left: 2px; transition: color 0.2s;"
+                                                >
+                                                    <svg
+                                                        class="w-3.5 h-3.5 hover:scale-110"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        stroke-width="2.5"
+                                                        viewBox="0 0 24 24"
+                                                    >
+                                                        <path
+                                                            stroke-linecap="round"
+                                                            stroke-linejoin="round"
+                                                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                                        />
+                                                    </svg>
+                                                </button>
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="px-3 sm:px-4 py-3 sm:py-4">
+                                        <div class="flex items-center justify-end gap-2 msg-actions-cell">
+                                            <button
+                                                class="edit-notif-btn"
+                                                data-slug={post.slug}
+                                                onclick={`openEditModal('${post.slug}')`}
+                                                title="Edit notification details before sending"
+                                            >
+                                                <svg
+                                                    class="w-3.5 h-3.5"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                >
+                                                    <path
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                                    />
+                                                </svg>
+                                                <span class="hidden sm:inline">
+                                                    Edit
+                                                </span>
+                                            </button>
+                                            <button
+                                                class="send-push-btn"
+                                                data-slug={post.slug}
+                                                onclick={`sendPushDirect('${post.slug}', this)`}
+                                                title="Send push notification now"
+                                            >
+                                                <svg
+                                                    class="w-3.5 h-3.5 send-icon"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                >
+                                                    <path
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                                                    />
+                                                </svg>
+                                                <span class="hidden sm:inline">
+                                                    Send Push
+                                                </span>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))
+                        )
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Console Tab -->
+        <div id="msgTabConsole" class="msg-tab-content flex-1 overflow-hidden">
+            <div class="console-panel h-full">
+                <div class="console-header">
+                    <span>Activity Console</span>
+                    <button
+                        class="console-clear-btn"
+                        onclick="clearMsgConsole()">Clear</button
+                    >
+                </div>
+                <div class="console-body" id="consoleBody">
+                    <div class="console-empty" id="consoleEmpty">
+                        <svg
+                            class="w-12 h-12"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="1.5"
+                                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                stroke="#475569"></path>
+                        </svg>
+                        <p class="text-sm text-[#475569]">No activity yet.</p>
+                        <p class="text-xs text-[#64748b] mt-1">
+                            Send a push notification to see logs here.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Notification Modal -->
+    <div id="editModal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>✏️ Edit Notification</h3>
+                <button class="modal-close-btn" onclick="closeEditModal()">
+                    <svg
+                        class="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editModalSlug" />
+                <div class="modal-field">
+                    <label for="editTitle">Title</label>
+                    <input
+                        type="text"
+                        id="editTitle"
+                        placeholder="Notification title..."
+                    />
+                </div>
+                <div class="modal-field">
+                    <label for="editBody">Description / Body</label>
+                    <textarea
+                        id="editBody"
+                        rows="3"
+                        placeholder="Notification body text..."></textarea>
+                </div>
+                <div class="modal-field">
+                    <label for="editImage">Hero Image URL</label>
+                    <input
+                        type="text"
+                        id="editImage"
+                        placeholder="https://cdn.yourdomain.com/..."
+                    />
+                </div>
+                <div class="modal-field">
+                    <label for="editUrl">Click URL</label>
+                    <input
+                        type="text"
+                        id="editUrl"
+                        placeholder="https://www.yourdomain.com/post/..."
+                    />
+                </div>
+                <div
+                    class="modal-field"
+                    style="margin-top: 1rem; border-top: 1px solid #f1f5f9; padding-top: 1rem;"
+                >
+                    <label
+                        style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; color: #475569;"
+                    >
+                        <input
+                            type="checkbox"
+                            id="editScheduleCheckbox"
+                            onchange="toggleScheduleInput('edit')"
+                            style="width: auto; margin: 0;"
+                        />
+                        Schedule for later
+                    </label>
+                </div>
+                <div
+                    class="modal-field hidden"
+                    id="editScheduleTimeContainer"
+                    style="margin-top: 0.75rem;"
+                >
+                    <label
+                        for="editScheduleTime"
+                        style="font-weight: 600; color: #475569; display: block; margin-bottom: 0.25rem;"
+                        >Schedule Date and Time</label
+                    >
+                    <input
+                        type="datetime-local"
+                        id="editScheduleTime"
+                        style="width: 100%; padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; font-size: 0.875rem;"
+                    />
+                </div>
+                <div
+                    id="editModalPreview"
+                    class="rounded-lg border border-[#e2e8f0] p-3 bg-[#f8fafc]"
+                >
+                    <p
+                        class="text-xs text-[#94a3b8] mb-1 font-semibold uppercase tracking-wider"
+                    >
+                        Preview
+                    </p>
+                    <p
+                        class="text-sm font-semibold text-[#1e293b]"
+                        id="previewTitle"
+                    >
+                        —
+                    </p>
+                    <p class="text-xs text-[#64748b] mt-0.5" id="previewBody">
+                        —
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel-btn" onclick="closeEditModal()"
+                    >Cancel</button
+                >
+                <button
+                    class="modal-send-btn"
+                    id="modalSendBtn"
+                    onclick="sendModifiedNotification()"
+                >
+                    <svg
+                        class="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                    </svg>
+                    Send Notification
+                </button>
+            </div>
+        </div>
+    </div>
+    <!-- Custom Confirmation Modal -->
+    <div id="confirmModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 28rem;">
+            <div class="modal-header">
+                <h3>🔔 Confirm Push Notification</h3>
+                <button class="modal-close-btn" onclick="closeConfirmModal()">
+                    <svg
+                        class="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div
+                class="modal-body text-center"
+                style="padding: 1.5rem 1.25rem;"
+            >
+                <div
+                    style="width: 3rem; height: 3rem; background: #e8f0fe; color: #1a73e8; border-radius: 9999px; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; border: 1px solid #c2d7fa;"
+                >
+                    <svg
+                        class="w-6 h-6"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                        ></path>
+                    </svg>
+                </div>
+                <p class="text-sm text-[#475569] leading-relaxed">
+                    Are you sure you want to send a push notification to all
+                    subscribers for:
+                </p>
+                <p
+                    class="text-base font-bold text-[#1e293b] mt-2 px-2 break-words"
+                    id="confirmPostTitle"
+                >
+                    —
+                </p>
+                <div
+                    style="margin-top: 1.25rem; border-top: 1px solid #f1f5f9; padding-top: 1rem; text-align: left;"
+                >
+                    <label
+                        style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; color: #475569; font-size: 0.8125rem;"
+                    >
+                        <input
+                            type="checkbox"
+                            id="confirmScheduleCheckbox"
+                            onchange="toggleScheduleInput('confirm')"
+                            style="width: auto; margin: 0;"
+                        />
+                        Schedule for later
+                    </label>
+                </div>
+                <div
+                    class="modal-field hidden text-left"
+                    id="confirmScheduleTimeContainer"
+                    style="margin-top: 0.75rem;"
+                >
+                    <label
+                        for="confirmScheduleTime"
+                        style="font-size: 0.8125rem; font-weight: 600; color: #475569; display: block; margin-bottom: 0.25rem;"
+                        >Schedule Date and Time</label
+                    >
+                    <input
+                        type="datetime-local"
+                        id="confirmScheduleTime"
+                        style="width: 100%; padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; font-size: 0.875rem;"
+                    />
+                </div>
+            </div>
+            <div
+                class="modal-footer"
+                style="justify-content: center; background: #f8fafc; gap: 0.75rem; border-top: 1px solid #e2e8f0;"
+            >
+                <button
+                    class="modal-cancel-btn"
+                    style="width: 7rem;"
+                    onclick="closeConfirmModal()">Cancel</button
+                >
+                <button
+                    class="modal-send-btn"
+                    style="width: 7rem; justify-content: center;"
+                    id="confirmModalSendBtn">Send</button
+                >
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Cancellation Confirmation Modal -->
+    <div id="cancelConfirmModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width: 26rem;">
+            <div class="modal-header">
+                <h3>🗑️ Cancel Scheduled Push</h3>
+                <button
+                    class="modal-close-btn"
+                    onclick="closeCancelConfirmModal()"
+                >
+                    <svg
+                        class="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div
+                class="modal-body text-center"
+                style="padding: 1.5rem 1.25rem;"
+            >
+                <div
+                    style="width: 3rem; height: 3rem; background: #fee2e2; color: #ef4444; border-radius: 9999px; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; border: 1px solid #fecaca;"
+                >
+                    <svg
+                        class="w-6 h-6"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        ></path>
+                    </svg>
+                </div>
+                <p class="text-sm text-[#475569] leading-relaxed">
+                    Are you sure you want to cancel the scheduled push
+                    notification for:
+                </p>
+                <p
+                    class="text-base font-bold text-[#1e293b] mt-2 px-2 break-words"
+                    id="cancelConfirmPostTitle"
+                >
+                    —
+                </p>
+            </div>
+            <div
+                class="modal-footer"
+                style="justify-content: center; background: #f8fafc; gap: 0.75rem; border-top: 1px solid #e2e8f0;"
+            >
+                <button
+                    class="modal-cancel-btn"
+                    style="width: 7rem;"
+                    onclick="closeCancelConfirmModal()">No, Keep</button
+                >
+                <button
+                    class="modal-send-btn"
+                    style="width: 8rem; justify-content: center; background: #ef4444;"
+                    id="cancelConfirmModalBtn">Yes, Cancel</button
+                >
+            </div>
+        </div>
+    </div>
+
+    <script is:inline>
+        // ═══════════════════════════════════════════════════════════════════════
+        // Client-side JavaScript for Messaging Page
+        // ═══════════════════════════════════════════════════════════════════════
+
+        let logCount = 0;
+        let pendingPushSlug = null;
+        let pendingPushBtn = null;
+        let pendingCancelSlug = null;
+        let pendingCancelBtn = null;
+
+        // ─── Tab Switching ──────────────────────────────────────────────────
+        function switchMsgTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll(".msg-tab-btn").forEach((btn) => {
+                btn.classList.toggle("active", btn.dataset.tab === tabName);
+            });
+            // Update tab content
+            document.querySelectorAll(".msg-tab-content").forEach((content) => {
+                content.classList.remove("active");
+            });
+            const target = document.getElementById(
+                tabName === "posts" ? "msgTabPosts" : "msgTabConsole",
+            );
+            if (target) target.classList.add("active");
+
+            // Reset badge when switching to console
+            if (tabName === "console") {
+                const badge = document.getElementById("consoleBadge");
+                if (badge) {
+                    badge.textContent = "0";
+                    badge.classList.add("empty");
+                }
+            }
+        }
+
+        // ─── Console Logging ────────────────────────────────────────────────
+        function addConsoleLog(type, message) {
+            const body = document.getElementById("consoleBody");
+            const empty = document.getElementById("consoleEmpty");
+            if (!body) return;
+            if (empty) empty.style.display = "none";
+
+            // Clean inline SVGs matching current text color using currentColor
+            const svgs = {
+                info: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; flex-shrink: 0; width: 14px; height: 14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+                success: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; flex-shrink: 0; width: 14px; height: 14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+                error: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; flex-shrink: 0; width: 14px; height: 14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+                cleanup: `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; flex-shrink: 0; width: 14px; height: 14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>`,
+            };
+
+            const now = new Date();
+            const ts = now.toLocaleTimeString("en-IN", { hour12: false });
+
+            const entry = document.createElement("div");
+            entry.className = "log-entry";
+            entry.style.display = "flex";
+            entry.style.alignItems = "center";
+            entry.style.gap = "0.5rem";
+
+            entry.innerHTML = `<span class="log-ts">[${ts}]</span> <span class="log-${type}" style="display: inline-flex; align-items: center; gap: 0.375rem;">${svgs[type] || ""} <span>${escapeHtml(message)}</span></span>`;
+            body.appendChild(entry);
+            body.scrollTop = body.scrollHeight;
+
+            // Update badge if console tab is not active
+            const consoleTab = document.getElementById("msgTabConsole");
+            if (!consoleTab || !consoleTab.classList.contains("active")) {
+                logCount++;
+                const badge = document.getElementById("consoleBadge");
+                if (badge) {
+                    badge.textContent = logCount > 99 ? "99+" : logCount;
+                    badge.classList.remove("empty");
+                }
+            }
+        }
+
+        function clearMsgConsole() {
+            const body = document.getElementById("consoleBody");
+            if (body) {
+                body.innerHTML = `<div class="console-empty" id="consoleEmpty">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke="#475569"/>
+                    </svg>
+                    <p class="text-sm text-[#475569]">Console cleared.</p>
+                </div>`;
+            }
+            logCount = 0;
+            const badge = document.getElementById("consoleBadge");
+            if (badge) {
+                badge.textContent = "0";
+                badge.classList.add("empty");
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ─── Custom Confirmation Modal ──────────────────────────────────────
+        function closeConfirmModal() {
+            const modal = document.getElementById("confirmModal");
+            if (modal) modal.classList.add("hidden");
+            pendingPushSlug = null;
+            pendingPushBtn = null;
+        }
+
+        function openConfirmModal(slug, btnEl) {
+            const postTitle = btnEl.closest("tr")?.dataset?.title || slug;
+            document.getElementById("confirmPostTitle").textContent =
+                `"${postTitle}"`;
+
+            pendingPushSlug = slug;
+            pendingPushBtn = btnEl;
+
+            const modal = document.getElementById("confirmModal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function openCancelConfirmModal(slug, btnEl) {
+            const postTitle = btnEl.closest("tr")?.dataset?.title || slug;
+            document.getElementById("cancelConfirmPostTitle").textContent =
+                `"${postTitle}"`;
+
+            pendingCancelSlug = slug;
+            pendingCancelBtn = btnEl;
+
+            const modal = document.getElementById("cancelConfirmModal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeCancelConfirmModal() {
+            const modal = document.getElementById("cancelConfirmModal");
+            if (modal) modal.classList.add("hidden");
+            pendingCancelSlug = null;
+            pendingCancelBtn = null;
+        }
+
+        function toggleScheduleInput(modalType) {
+            const checkbox = document.getElementById(
+                `${modalType}ScheduleCheckbox`,
+            );
+            const container = document.getElementById(
+                `${modalType}ScheduleTimeContainer`,
+            );
+            if (checkbox && container) {
+                if (checkbox.checked) {
+                    container.classList.remove("hidden");
+                    // Set default schedule time to current time + 1 hour, formatted for datetime-local (YYYY-MM-DDTHH:MM)
+                    const now = new Date();
+                    now.setHours(now.getHours() + 1);
+                    const localIso = new Date(
+                        now.getTime() - now.getTimezoneOffset() * 60000,
+                    )
+                        .toISOString()
+                        .slice(0, 16);
+                    const timeInput = document.getElementById(
+                        `${modalType}ScheduleTime`,
+                    );
+                    if (timeInput) timeInput.value = localIso;
+                } else {
+                    container.classList.add("hidden");
+                }
+            }
+        }
+
+        // Setup confirm click handler
+        document
+            .getElementById("confirmModalSendBtn")
+            .addEventListener("click", () => {
+                if (pendingPushSlug && pendingPushBtn) {
+                    const slug = pendingPushSlug;
+                    const btn = pendingPushBtn;
+
+                    const isScheduled = document.getElementById(
+                        "confirmScheduleCheckbox",
+                    ).checked;
+                    const scheduledTime = document.getElementById(
+                        "confirmScheduleTime",
+                    ).value;
+
+                    closeConfirmModal();
+
+                    if (isScheduled) {
+                        executeScheduleDirect(slug, btn, scheduledTime);
+                    } else {
+                        executePushDirect(slug, btn);
+                    }
+                }
+            });
+
+        // Setup cancel confirm click handler
+        document
+            .getElementById("cancelConfirmModalBtn")
+            .addEventListener("click", () => {
+                if (pendingCancelSlug && pendingCancelBtn) {
+                    const slug = pendingCancelSlug;
+                    const btn = pendingCancelBtn;
+                    closeCancelConfirmModal();
+                    executeCancelSchedule(slug, btn);
+                }
+            });
+
+        // Save and Load Sent/Scheduled Notifications to Persist Across Refreshes
+        const LOCAL_STORAGE_KEY = "tsa_sent_notifications";
+
+        function loadSentNotifications() {
+            try {
+                const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (!stored) return;
+                const sentList = JSON.parse(stored);
+
+                Object.keys(sentList).forEach((slug) => {
+                    let isoString = "";
+                    let status = "sent";
+
+                    if (typeof sentList[slug] === "string") {
+                        isoString = sentList[slug];
+                    } else if (
+                        sentList[slug] &&
+                        typeof sentList[slug] === "object"
+                    ) {
+                        isoString = sentList[slug].time;
+                        status = sentList[slug].status || "sent";
+                    }
+
+                    const date = new Date(isoString);
+                    if (isNaN(date.getTime())) return;
+
+                    const containers = document.querySelectorAll(
+                        `[data-sent-for="${slug}"]`,
+                    );
+                    containers.forEach((container) => {
+                        const timeEl = container.querySelector(".sent-time");
+                        const textEl =
+                            container.querySelector(".sent-indicator");
+                        const cancelBtn = container.querySelector(
+                            ".cancel-schedule-btn",
+                        );
+
+                        if (cancelBtn) {
+                            cancelBtn.style.display =
+                                status === "scheduled" ? "inline-flex" : "none";
+                        }
+                        if (textEl) {
+                            if (status === "scheduled") {
+                                textEl.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Scheduled`;
+                                textEl.style.color = "#d97706"; // Amber/Orange
+                            } else {
+                                textEl.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Sent`;
+                                textEl.style.color = "#059669"; // Green
+                            }
+                        }
+                        if (timeEl) {
+                            const options = { day: "numeric", month: "short" };
+                            const datePart = date.toLocaleDateString(
+                                "en-IN",
+                                options,
+                            );
+                            const timePart = date.toLocaleTimeString("en-IN", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: false,
+                            });
+                            timeEl.textContent = `(${datePart}, ${timePart})`;
+                        }
+                        container.classList.remove("hidden");
+                    });
+                });
+            } catch (e) {
+                console.error("Failed to load sent notifications:", e);
+            }
+        }
+
+        function saveSentNotification(slug, dateIsoString, status = "sent") {
+            try {
+                const stored = localStorage.getItem(LOCAL_STORAGE_KEY) || "{}";
+                const sentList = JSON.parse(stored);
+                sentList[slug] = { time: dateIsoString, status };
+                localStorage.setItem(
+                    LOCAL_STORAGE_KEY,
+                    JSON.stringify(sentList),
+                );
+            } catch (e) {
+                console.error("Failed to save sent notification:", e);
+            }
+        }
+
+        function showSentIndicator(
+            slug,
+            optionalDateString,
+            status = "sent",
+            shouldSave = true,
+        ) {
+            const containers = document.querySelectorAll(
+                `[data-sent-for="${slug}"]`,
+            );
+            if (containers.length > 0) {
+                const isoString =
+                    optionalDateString || new Date().toISOString();
+                const date = new Date(isoString);
+
+                containers.forEach((container) => {
+                    const timeEl = container.querySelector(".sent-time");
+                    const textEl = container.querySelector(".sent-indicator");
+                    const cancelBtn = container.querySelector(
+                        ".cancel-schedule-btn",
+                    );
+
+                    if (textEl) {
+                        if (status === "scheduled") {
+                            textEl.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Scheduled`;
+                            textEl.style.color = "#d97706";
+                        } else {
+                            textEl.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Sent`;
+                            textEl.style.color = "#059669";
+                        }
+                    }
+                    if (timeEl && !isNaN(date.getTime())) {
+                        const options = { day: "numeric", month: "short" };
+                        const datePart = date.toLocaleDateString("en-IN", options); // e.g. "5 Jul"
+                        const timePart = date.toLocaleTimeString("en-IN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                        }); // e.g. "20:15"
+                        timeEl.textContent = `(${datePart}, ${timePart})`;
+                    }
+
+                    if (cancelBtn) {
+                        cancelBtn.style.display =
+                            status === "scheduled" ? "inline-flex" : "none";
+                    }
+                    container.classList.remove("hidden");
+                });
+
+                if (shouldSave) {
+                    saveSentNotification(slug, isoString, status);
+                }
+            }
+        }
+
+        async function executeScheduleDirect(slug, btnEl, scheduledTime) {
+            if (!scheduledTime) {
+                alert("Please select a valid date and time");
+                return;
+            }
+            if (new Date(scheduledTime) <= new Date()) {
+                alert("Scheduled time must be in the future");
+                return;
+            }
+
+            switchMsgTab("console");
+            addConsoleLog("info", `Scheduling notification for: ${slug}`);
+
+            btnEl.disabled = true;
+
+            try {
+                const utcTime = new Date(scheduledTime).toISOString();
+                addConsoleLog(
+                    "info",
+                    `Calling schedule-notification API for ${new Date(utcTime).toLocaleString()}...`,
+                );
+                const res = await fetch("/api/schedule-notification", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        slug,
+                        scheduled_time: utcTime,
+                    }),
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    addConsoleLog(
+                        "error",
+                        `Scheduling error: ${data.error || "Unknown error"}`,
+                    );
+                    return;
+                }
+
+                addConsoleLog(
+                    "success",
+                    `📅 Notification scheduled successfully for: ${new Date(utcTime).toLocaleString()}`,
+                );
+                showSentIndicator(slug, utcTime, "scheduled");
+            } catch (err) {
+                addConsoleLog(
+                    "error",
+                    `Scheduling request failed: ${err.message}`,
+                );
+            } finally {
+                btnEl.disabled = false;
+            }
+        }
+
+        function cancelSchedule(slug, trashBtnEl) {
+            openCancelConfirmModal(slug, trashBtnEl);
+        }
+
+        async function executeCancelSchedule(slug, trashBtnEl) {
+            switchMsgTab("console");
+            addConsoleLog("info", `Attempting to cancel schedule for: ${slug}`);
+
+            if (trashBtnEl) trashBtnEl.disabled = true;
+
+            try {
+                addConsoleLog("info", "Calling cancel-schedule API...");
+                const res = await fetch("/api/cancel-schedule", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ slug }),
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    addConsoleLog(
+                        "error",
+                        `Cancellation failed: ${data.error || "Unknown error"}`,
+                    );
+                    return;
+                }
+
+                addConsoleLog(
+                    "success",
+                    `🧹 Scheduled notification for "${slug}" cancelled successfully`,
+                );
+
+                // Remove from localStorage
+                try {
+                    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+                    if (stored) {
+                        const sentList = JSON.parse(stored);
+                        delete sentList[slug];
+                        localStorage.setItem(
+                            LOCAL_STORAGE_KEY,
+                            JSON.stringify(sentList),
+                        );
+                    }
+                } catch (e) {
+                    console.error(
+                        "Failed to update localStorage on cancel:",
+                        e,
+                    );
+                }
+
+                // Hide indicator container
+                const containers = document.querySelectorAll(
+                    `[data-sent-for="${slug}"]`,
+                );
+                containers.forEach((container) => {
+                    container.classList.add("hidden");
+                });
+            } catch (err) {
+                addConsoleLog(
+                    "error",
+                    `Cancellation request failed: ${err.message}`,
+                );
+            } finally {
+                if (trashBtnEl) trashBtnEl.disabled = false;
+            }
+        }
+
+        // ─── Send Push (Direct — one click) ─────────────────────────────────
+        function sendPushDirect(slug, btnEl) {
+            // Reset confirm checkbox and container on open
+            const checkbox = document.getElementById("confirmScheduleCheckbox");
+            if (checkbox) checkbox.checked = false;
+            const container = document.getElementById(
+                "confirmScheduleTimeContainer",
+            );
+            if (container) container.classList.add("hidden");
+
+            openConfirmModal(slug, btnEl);
+        }
+
+        async function executePushDirect(slug, btnEl) {
+            switchMsgTab("console");
+            addConsoleLog("info", `Preparing notification for: ${slug}`);
+
+            // Disable button
+            btnEl.disabled = true;
+            const iconEl = btnEl.querySelector(".send-icon");
+            if (iconEl) iconEl.classList.add("spin");
+
+            try {
+                addConsoleLog("info", "Calling send-notification API...");
+                const res = await fetch("/api/send-notification", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ slug }),
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    addConsoleLog(
+                        "error",
+                        `API error: ${data.error || "Unknown error"}`,
+                    );
+                    return;
+                }
+
+                // Replay server logs into console with slight delays for visual effect
+                if (data.logs && Array.isArray(data.logs)) {
+                    for (let i = 0; i < data.logs.length; i++) {
+                        const log = data.logs[i];
+                        await new Promise((r) => setTimeout(r, 80));
+                        addConsoleLog(log.type, log.message);
+                    }
+                }
+
+                // Show sent indicator on the post row
+                showSentIndicator(slug);
+            } catch (err) {
+                addConsoleLog("error", `Request failed: ${err.message}`);
+            } finally {
+                btnEl.disabled = false;
+                if (iconEl) iconEl.classList.remove("spin");
+            }
+        }
+
+        // ─── Edit Modal ─────────────────────────────────────────────────────
+        async function openEditModal(slug) {
+            const modal = document.getElementById("editModal");
+            if (!modal) return;
+
+            // Reset fields
+            document.getElementById("editModalSlug").value = slug;
+            document.getElementById("editTitle").value = "";
+            document.getElementById("editBody").value = "";
+            document.getElementById("editImage").value = "";
+            document.getElementById("editUrl").value = "";
+            document.getElementById("previewTitle").textContent = "Loading...";
+            document.getElementById("previewBody").textContent = "";
+
+            // Reset scheduling fields
+            const checkbox = document.getElementById("editScheduleCheckbox");
+            if (checkbox) checkbox.checked = false;
+            const container = document.getElementById(
+                "editScheduleTimeContainer",
+            );
+            if (container) container.classList.add("hidden");
+
+            modal.classList.remove("hidden");
+
+            // Fetch post metadata
+            try {
+                const res = await fetch(
+                    `/api/send-notification?slug=${encodeURIComponent(slug)}`,
+                );
+                const data = await res.json();
+
+                if (res.ok) {
+                    document.getElementById("editTitle").value =
+                        data.title || "";
+                    document.getElementById("editBody").value =
+                        data.description || "";
+                    document.getElementById("editImage").value =
+                        data.heroImage || "";
+                    document.getElementById("editUrl").value = data.url || "";
+                    document.getElementById("previewTitle").textContent =
+                        data.title || slug;
+                    document.getElementById("previewBody").textContent =
+                        data.description || "No description";
+                } else {
+                    document.getElementById("previewTitle").textContent =
+                        "Failed to load";
+                    document.getElementById("previewBody").textContent =
+                        data.error || "Unknown error";
+                }
+            } catch (err) {
+                document.getElementById("previewTitle").textContent = "Error";
+                document.getElementById("previewBody").textContent =
+                    err.message;
+            }
+
+            // Live preview update listeners
+            const titleInput = document.getElementById("editTitle");
+            const bodyInput = document.getElementById("editBody");
+            titleInput.oninput = () => {
+                document.getElementById("previewTitle").textContent =
+                    titleInput.value || "—";
+            };
+            bodyInput.oninput = () => {
+                document.getElementById("previewBody").textContent =
+                    bodyInput.value || "—";
+            };
+        }
+
+        function closeEditModal() {
+            const modal = document.getElementById("editModal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function sendModifiedNotification() {
+            const slug = document.getElementById("editModalSlug").value;
+            const title = document.getElementById("editTitle").value.trim();
+            const body = document.getElementById("editBody").value.trim();
+            const image = document.getElementById("editImage").value.trim();
+            const url = document.getElementById("editUrl").value.trim();
+            const sendBtn = document.getElementById("modalSendBtn");
+
+            const isScheduled = document.getElementById(
+                "editScheduleCheckbox",
+            ).checked;
+            const scheduledTime =
+                document.getElementById("editScheduleTime").value;
+
+            if (!title) {
+                alert("Title is required");
+                return;
+            }
+
+            closeEditModal();
+
+            if (isScheduled) {
+                if (!scheduledTime) {
+                    alert("Please select a valid date and time");
+                    return;
+                }
+                if (new Date(scheduledTime) <= new Date()) {
+                    alert("Scheduled time must be in the future");
+                    return;
+                }
+
+                switchMsgTab("console");
+                addConsoleLog(
+                    "info",
+                    `Scheduling modified notification for: ${slug}`,
+                );
+                if (sendBtn) sendBtn.disabled = true;
+
+                try {
+                    const utcTime = new Date(scheduledTime).toISOString();
+                    const payload = { slug, scheduled_time: utcTime };
+                    if (title) payload.title = title;
+                    if (body) payload.body = body;
+                    if (image) payload.image = image;
+                    if (url) payload.url = url;
+
+                    addConsoleLog(
+                        "info",
+                        "Calling schedule-notification API...",
+                    );
+                    const res = await fetch("/api/schedule-notification", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    });
+
+                    const data = await res.json();
+
+                    if (!res.ok || !data.success) {
+                        addConsoleLog(
+                            "error",
+                            `Scheduling error: ${data.error || "Unknown error"}`,
+                        );
+                        return;
+                    }
+
+                    addConsoleLog(
+                        "success",
+                        `📅 Notification scheduled successfully for: ${new Date(utcTime).toLocaleString()}`,
+                    );
+                    showSentIndicator(slug, utcTime, "scheduled");
+                } catch (err) {
+                    addConsoleLog(
+                        "error",
+                        `Scheduling request failed: ${err.message}`,
+                    );
+                } finally {
+                    if (sendBtn) sendBtn.disabled = false;
+                }
+            } else {
+                switchMsgTab("console");
+                addConsoleLog(
+                    "info",
+                    `Sending modified notification for: ${slug}`,
+                );
+
+                if (sendBtn) sendBtn.disabled = true;
+
+                try {
+                    const payload = { slug };
+                    if (title) payload.title = title;
+                    if (body) payload.body = body;
+                    if (image) payload.image = image;
+                    if (url) payload.url = url;
+
+                    const res = await fetch("/api/send-notification", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    });
+
+                    const data = await res.json();
+
+                    if (!res.ok || !data.success) {
+                        addConsoleLog(
+                            "error",
+                            `API error: ${data.error || "Unknown error"}`,
+                        );
+                        return;
+                    }
+
+                    if (data.logs && Array.isArray(data.logs)) {
+                        for (let i = 0; i < data.logs.length; i++) {
+                            await new Promise((r) => setTimeout(r, 80));
+                            addConsoleLog(
+                                data.logs[i].type,
+                                data.logs[i].message,
+                            );
+                        }
+                    }
+
+                    showSentIndicator(slug);
+                } catch (err) {
+                    addConsoleLog("error", `Request failed: ${err.message}`);
+                } finally {
+                    if (sendBtn) sendBtn.disabled = false;
+                }
+            }
+        }
+
+        // ─── Search ─────────────────────────────────────────────────────────
+        (function () {
+            const searchInput = document.getElementById("msgSearchInput");
+            if (searchInput) {
+                searchInput.addEventListener("input", function () {
+                    const query = this.value.toLowerCase().trim();
+                    document
+                        .querySelectorAll(".msg-post-row")
+                        .forEach((row) => {
+                            const slug = row.dataset.slug || "";
+                            const title = row.dataset.title || "";
+                            const match =
+                                !query ||
+                                slug.includes(query) ||
+                                title.toLowerCase().includes(query);
+                            row.style.display = match ? "" : "none";
+                        });
+                });
+            }
+        })();
+
+        // ─── Close modal on overlay click ───────────────────────────────────
+        (function () {
+            const editModal = document.getElementById("editModal");
+            if (editModal) {
+                editModal.addEventListener("click", function (e) {
+                    if (e.target === editModal) closeEditModal();
+                });
+            }
+            const confirmModal = document.getElementById("confirmModal");
+            if (confirmModal) {
+                confirmModal.addEventListener("click", function (e) {
+                    if (e.target === confirmModal) closeConfirmModal();
+                });
+            }
+            const cancelConfirmModal =
+                document.getElementById("cancelConfirmModal");
+            if (cancelConfirmModal) {
+                cancelConfirmModal.addEventListener("click", function (e) {
+                    if (e.target === cancelConfirmModal)
+                        closeCancelConfirmModal();
+                });
+            }
+        })();
+
+        // ─── Close modal on Escape key ──────────────────────────────────────
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+                closeEditModal();
+                closeConfirmModal();
+                closeCancelConfirmModal();
+            }
+        });
+
+        // ─── Load Sent Notifications on Init ────────────────────────────────
+        loadSentNotifications();
+    </script>
+</DashboardLayout>

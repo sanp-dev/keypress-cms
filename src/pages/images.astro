@@ -1,0 +1,1255 @@
+---
+// src/pages/images.astro
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import { env } from "cloudflare:workers";
+import { getSession, getSessionToken } from "../lib/auth";
+
+const sessionToken = getSessionToken(Astro.request.headers.get("cookie"));
+let isAdmin = false;
+
+if (sessionToken) {
+  const session = await getSession(env?.SESSION as KVNamespace, sessionToken);
+  if (session && session.role === "admin") {
+    isAdmin = true;
+  }
+}
+
+// Only admin is allowed here
+if (!isAdmin) {
+  return Astro.redirect("/");
+}
+---
+
+<DashboardLayout title="R2 Media Manager">
+  <div class="space-y-6 max-w-[1600px] mx-auto">
+    <!-- Header Card -->
+    <div
+      class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all duration-300"
+    >
+      <div>
+        <h2 class="text-xl font-bold text-[#1e293b] flex items-center gap-2">
+          <svg
+            class="w-6 h-6 text-[#1a73e8]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            ></path>
+          </svg>
+          CF R2 Bucket Manager
+        </h2>
+        <p class="text-sm text-[#64748b] mt-1">
+          Scan your R2 bucket storage, find unused images, and delete them
+          directly from the dashboard.
+        </p>
+      </div>
+
+      <button
+        id="btnLiveFetch"
+        class="bg-[#1a73e8] hover:bg-[#1557b0] text-white px-5 py-2.5 rounded-lg font-medium text-sm flex items-center gap-2 shadow-sm transition-all duration-200 hover:-translate-y-[1px] active:translate-y-0 shrink-0"
+      >
+        <svg
+          id="fetchIcon"
+          class="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+          ></path>
+        </svg>
+        <span>Live Fetch Storage</span>
+      </button>
+    </div>
+
+    <!-- Initial / Empty State Panel -->
+    <div
+      id="initialState"
+      class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-12 text-center transition-all duration-300"
+    >
+      <div
+        class="w-16 h-16 bg-[#e8f0fe] text-[#1a73e8] rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse"
+      >
+        <svg
+          class="w-8 h-8"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-[#1e293b]">R2 Storage Scan Required</h3>
+      <p class="text-sm text-[#64748b] max-w-md mx-auto mt-2">
+        Click the <strong>Live Fetch Storage</strong> button at the top to scan your
+        R2 bucket. We will check the usage of all images across all published markdown
+        posts.
+      </p>
+    </div>
+
+    <!-- Live Fetching Progress Console -->
+    <div
+      id="fetchProgressPanel"
+      class="hidden bg-white rounded-xl shadow-sm border border-[#e2e8f0] overflow-hidden transition-all duration-300"
+    >
+      <div class="p-6 border-b border-[#e2e8f0]">
+        <h3 class="font-bold text-[#1e293b] flex items-center gap-2">
+          <span class="w-2.5 h-2.5 bg-[#1a73e8] rounded-full animate-ping"
+          ></span>
+          Scanning Storage and Post Content...
+        </h3>
+        <p class="text-xs text-[#64748b] mt-1">
+          This operation might take a few seconds depending on the number of
+          images and posts.
+        </p>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="h-1.5 w-full bg-[#f1f5f9]">
+        <div
+          id="progressBar"
+          class="h-full bg-gradient-to-r from-blue-500 to-[#1a73e8] transition-all duration-300 ease-out"
+          style="width: 5%"
+        >
+        </div>
+      </div>
+
+      <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 bg-[#f8fafc]">
+        <!-- Steps Progress List -->
+        <div class="space-y-4">
+          <div
+            id="step-connect"
+            class="flex items-center gap-3 text-slate-500 font-medium text-sm"
+          >
+            <div
+              class="step-indicator w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center bg-white text-xs text-slate-500 shrink-0"
+            >
+              1
+            </div>
+            <span class="step-text">Connecting to Cloudflare R2 bucket...</span>
+          </div>
+          <div
+            id="step-r2"
+            class="flex items-center gap-3 text-slate-500 font-medium text-sm"
+          >
+            <div
+              class="step-indicator w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center bg-white text-xs text-slate-500 shrink-0"
+            >
+              2
+            </div>
+            <span class="step-text">Listing storage objects...</span>
+          </div>
+          <div
+            id="step-github"
+            class="flex items-center gap-3 text-slate-500 font-medium text-sm"
+          >
+            <div
+              class="step-indicator w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center bg-white text-xs text-slate-500 shrink-0"
+            >
+              3
+            </div>
+            <span class="step-text"
+              >Fetching published posts index from GitHub...</span
+            >
+          </div>
+          <div
+            id="step-scan"
+            class="flex items-center gap-3 text-slate-500 font-medium text-sm"
+          >
+            <div
+              class="step-indicator w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center bg-white text-xs text-slate-500 shrink-0"
+            >
+              4
+            </div>
+            <span class="step-text"
+              >Cross-referencing files in post content...</span
+            >
+          </div>
+        </div>
+
+        <!-- Animated Info Card -->
+        <div
+          class="bg-white rounded-lg p-5 border border-[#e2e8f0] flex flex-col justify-center"
+        >
+          <div class="flex items-center gap-3.5 mb-3">
+            <div class="bg-blue-50 text-blue-600 p-2.5 rounded-lg">
+              <svg
+                class="w-6 h-6 animate-pulse"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                ></path>
+              </svg>
+            </div>
+            <div>
+              <h4 class="text-sm font-bold text-[#1e293b]">Did you know?</h4>
+              <p class="text-xs text-[#64748b] mt-0.5">
+                We cache article contents locally in KV using Git SHAs to keep
+                your fetches fast and avoid GitHub API rate limits!
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Alert Panel -->
+    <div
+      id="errorPanel"
+      class="hidden bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-4"
+    >
+      <div
+        class="text-red-500 p-1 bg-white rounded-lg border border-red-100 shrink-0"
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          ></path>
+        </svg>
+      </div>
+      <div>
+        <h4 class="font-bold text-red-800 text-sm">
+          Failed to Fetch Storage Details
+        </h4>
+        <p id="errorText" class="text-xs text-red-700 mt-1">
+          An unknown error occurred.
+        </p>
+        <button
+          id="btnErrorRetry"
+          class="mt-3 text-xs bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1.5 rounded font-semibold transition-all"
+          >Retry Scan</button
+        >
+      </div>
+    </div>
+
+    <!-- Stats Summary Section (Dashboard Grid) -->
+    <div
+      id="statsSection"
+      class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+    >
+      <!-- Total Files -->
+      <div
+        class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-5 flex items-center justify-between"
+      >
+        <div>
+          <p
+            class="text-xs font-semibold text-[#64748b] uppercase tracking-wider"
+          >
+            Total Images
+          </p>
+          <p
+            id="statTotalCount"
+            class="text-3xl font-black text-[#1e293b] mt-1"
+          >
+            0
+          </p>
+        </div>
+        <div class="bg-blue-50 text-[#1a73e8] p-3 rounded-xl">
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            ></path>
+          </svg>
+        </div>
+      </div>
+      <!-- Storage Size -->
+      <div
+        class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-5 flex items-center justify-between"
+      >
+        <div>
+          <p
+            class="text-xs font-semibold text-[#64748b] uppercase tracking-wider"
+          >
+            Total Storage
+          </p>
+          <p id="statTotalSize" class="text-3xl font-black text-[#1e293b] mt-1">
+            0 B
+          </p>
+        </div>
+        <div class="bg-indigo-50 text-indigo-600 p-3 rounded-xl">
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+            ></path>
+          </svg>
+        </div>
+      </div>
+      <!-- In Use Count -->
+      <div
+        class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-5 flex items-center justify-between"
+      >
+        <div>
+          <p
+            class="text-xs font-semibold text-[#64748b] uppercase tracking-wider"
+          >
+            Used in Posts
+          </p>
+          <p id="statUsedCount" class="text-3xl font-black text-[#1e293b] mt-1">
+            0
+          </p>
+        </div>
+        <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl">
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+      </div>
+      <!-- Unused Count -->
+      <div
+        class="bg-white rounded-xl shadow-sm border border-[#e2e8f0] p-5 flex items-center justify-between"
+      >
+        <div>
+          <p
+            class="text-xs font-semibold text-[#64748b] uppercase tracking-wider"
+          >
+            Unused Images
+          </p>
+          <p
+            id="statUnusedCount"
+            class="text-3xl font-black text-[#1e293b] mt-1"
+          >
+            0
+          </p>
+        </div>
+        <div
+          id="statUnusedWrapper"
+          class="bg-amber-50 text-amber-600 p-3 rounded-xl transition-colors duration-300"
+        >
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            ></path>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Panel -->
+    <div
+      id="dataPanel"
+      class="hidden bg-white rounded-xl shadow-sm border border-[#e2e8f0] overflow-hidden flex flex-col min-h-[500px]"
+    >
+      <!-- Filter Bar -->
+      <div
+        class="p-4 border-b border-[#e2e8f0] bg-[#f8fafc] flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
+      >
+        <!-- Filter Tabs -->
+        <div class="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+          <button
+            id="tabAll"
+            class="tab-btn px-4 py-1.5 rounded-md font-semibold text-xs transition-all bg-white text-slate-800 shadow-sm"
+          >
+            All <span
+              id="badgeCountAll"
+              class="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded-full text-[10px]"
+              >0</span
+            >
+          </button>
+          <button
+            id="tabUsed"
+            class="tab-btn px-4 py-1.5 rounded-md font-semibold text-xs transition-all text-slate-600 hover:text-slate-900"
+          >
+            Used <span
+              id="badgeCountUsed"
+              class="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded-full text-[10px]"
+              >0</span
+            >
+          </button>
+          <button
+            id="tabUnused"
+            class="tab-btn px-4 py-1.5 rounded-md font-semibold text-xs transition-all text-slate-600 hover:text-slate-900"
+          >
+            Unused <span
+              id="badgeCountUnused"
+              class="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded-full text-[10px]"
+              >0</span
+            >
+          </button>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="relative w-full md:w-80">
+          <div
+            class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+          <input
+            type="text"
+            id="searchQuery"
+            placeholder="Search images by filename..."
+            class="w-full pl-9 pr-4 py-2 border border-[#e2e8f0] rounded-lg text-sm bg-white text-[#1e293b] placeholder-slate-400 focus:outline-none focus:border-[#1a73e8] focus:ring-1 focus:ring-[#1a73e8] transition-all"
+          />
+        </div>
+      </div>
+
+      <!-- Main Images Table -->
+      <div class="flex-1 overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr
+              class="border-b border-[#e2e8f0] text-xs font-semibold text-slate-500 bg-[#f8fafc]/50"
+            >
+              <th class="px-6 py-3.5 w-24">Preview</th>
+              <th class="px-6 py-3.5">Filename</th>
+              <th class="px-6 py-3.5 w-32">Size</th>
+              <th class="px-6 py-3.5 w-48">Uploaded</th>
+              <th class="px-6 py-3.5 w-64">Status & References</th>
+              <th class="px-6 py-3.5 w-20 text-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="imagesTableBody">
+            <!-- Dynamically populated rows -->
+          </tbody>
+        </table>
+
+        <!-- Empty State in Filter -->
+        <div
+          id="tableEmptyState"
+          class="hidden p-12 text-center text-slate-500"
+        >
+          <svg
+            class="w-12 h-12 mx-auto text-slate-300 mb-3"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0a2 2 0 01-2 2H6a2 2 0 01-2-2m16 0V9a2 2 0 00-2-2H6a2 2 0 00-2 9"
+            ></path>
+          </svg>
+          <p class="font-bold text-sm text-[#1e293b]">
+            No images found matching filter
+          </p>
+          <p class="text-xs text-[#64748b] mt-1">
+            Try clearing your search query or choosing another tab.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deletion Confirmation Modal -->
+  <div
+    id="deleteModal"
+    class="fixed inset-0 z-50 flex items-center justify-center hidden"
+  >
+    <div
+      class="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+      id="deleteModalOverlay"
+    >
+    </div>
+    <div
+      class="relative bg-white rounded-xl shadow-lg border border-[#e2e8f0] p-6 max-w-md w-full mx-4 transition-all duration-300 transform scale-95 opacity-0"
+      id="deleteModalCard"
+    >
+      <div class="flex items-start gap-4">
+        <div
+          class="bg-red-50 text-red-600 p-2.5 rounded-lg border border-red-100 shrink-0"
+        >
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            ></path>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h4 class="text-base font-bold text-[#1e293b]">
+            Delete Image Permanently?
+          </h4>
+          <p class="text-xs text-slate-500 mt-2">
+            Are you sure you want to delete <strong
+              id="deleteTargetKey"
+              class="text-slate-800 break-all">image.png</strong
+            >? This action is permanent and cannot be undone from the R2 storage
+            bucket.
+          </p>
+        </div>
+      </div>
+      <div class="mt-6 flex justify-end gap-3">
+        <button
+          id="btnDeleteCancel"
+          class="px-4 py-2 border border-[#e2e8f0] hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg transition-all"
+        >
+          Cancel
+        </button>
+        <button
+          id="btnDeleteConfirm"
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all flex items-center gap-1.5"
+        >
+          <span id="btnDeleteConfirmText">Delete Image</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>
+
+<style is:global>
+  /* Dropdown post lists animation */
+  .post-item-link {
+    transition:
+      background-color 0.2s,
+      border-color 0.2s;
+  }
+  .post-item-link:hover {
+    background-color: #f8fafc;
+    border-color: #cbd5e1;
+  }
+
+  /* Fade transitions and styling */
+  .fade-in {
+    animation: fadeIn 0.4s ease forwards;
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Status badges styling */
+  .badge-used {
+    background-color: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #d1fae5;
+  }
+  .badge-unused {
+    background-color: #fffbeb;
+    color: #92400e;
+    border: 1px solid #fef3c7;
+  }
+
+  /* Hover Zoom preview images */
+  .table-img-container {
+    overflow: hidden;
+    background-color: #f1f5f9;
+  }
+  .table-img-container img {
+    transition: transform 0.25s ease;
+  }
+  .table-img-container:hover img {
+    transform: scale(1.12);
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    let images = [];
+    let currentFilter = "all";
+    let keyToDelete = null;
+    let typeToDelete = null;
+
+    // DOM Elements
+    const btnLiveFetch = document.getElementById("btnLiveFetch");
+    const fetchIcon = document.getElementById("fetchIcon");
+    const initialState = document.getElementById("initialState");
+    const fetchProgressPanel = document.getElementById("fetchProgressPanel");
+    const progressBar = document.getElementById("progressBar");
+    const errorPanel = document.getElementById("errorPanel");
+    const errorText = document.getElementById("errorText");
+    const btnErrorRetry = document.getElementById("btnErrorRetry");
+    const statsSection = document.getElementById("statsSection");
+    const dataPanel = document.getElementById("dataPanel");
+    const imagesTableBody = document.getElementById("imagesTableBody");
+    const tableEmptyState = document.getElementById("tableEmptyState");
+    const searchQuery = document.getElementById("searchQuery");
+
+    // Tabs
+    const tabAll = document.getElementById("tabAll");
+    const tabUsed = document.getElementById("tabUsed");
+    const tabUnused = document.getElementById("tabUnused");
+    const tabCountAll = document.getElementById("badgeCountAll");
+    const tabCountUsed = document.getElementById("badgeCountUsed");
+    const tabCountUnused = document.getElementById("badgeCountUnused");
+
+    // Stats
+    const statTotalCount = document.getElementById("statTotalCount");
+    const statTotalSize = document.getElementById("statTotalSize");
+    const statUsedCount = document.getElementById("statUsedCount");
+    const statUnusedCount = document.getElementById("statUnusedCount");
+    const statUnusedWrapper = document.getElementById("statUnusedWrapper");
+
+    // Delete Modal Elements
+    const deleteModal = document.getElementById("deleteModal");
+    const deleteModalCard = document.getElementById("deleteModalCard");
+    const deleteModalOverlay = document.getElementById("deleteModalOverlay");
+    const deleteTargetKey = document.getElementById("deleteTargetKey");
+    const btnDeleteCancel = document.getElementById("btnDeleteCancel");
+    const btnDeleteConfirm = document.getElementById("btnDeleteConfirm");
+    const btnDeleteConfirmText = document.getElementById(
+      "btnDeleteConfirmText",
+    );
+
+    // Step Progress indicators
+    const steps = {
+      connect: document.getElementById("step-connect"),
+      r2: document.getElementById("step-r2"),
+      github: document.getElementById("step-github"),
+      scan: document.getElementById("step-scan"),
+    };
+
+    // Initialize events
+    btnLiveFetch.addEventListener("click", () => fetchStorageData());
+    btnErrorRetry.addEventListener("click", () => fetchStorageData());
+
+    // Filters and Search events
+    searchQuery.addEventListener("input", () => renderImages());
+    tabAll.addEventListener("click", () => selectFilter("all"));
+    tabUsed.addEventListener("click", () => selectFilter("used"));
+    tabUnused.addEventListener("click", () => selectFilter("unused"));
+
+    // Modal Cancel events
+    btnDeleteCancel.addEventListener("click", closeDeleteModal);
+    deleteModalOverlay.addEventListener("click", closeDeleteModal);
+    btnDeleteConfirm.addEventListener("click", confirmDelete);
+
+    function updateStepUI(stepKey, status, extraText = "") {
+      const stepEl = steps[stepKey];
+      if (!stepEl) return;
+      const indicator = stepEl.querySelector(".step-indicator");
+      const textSpan = stepEl.querySelector(".step-text");
+
+      if (status === "active") {
+        stepEl.className =
+          "flex items-center gap-3 text-blue-600 font-bold text-sm";
+        indicator.className =
+          "step-indicator w-6 h-6 rounded-full border-2 border-blue-600 flex items-center justify-center bg-blue-50 text-xs text-blue-600 font-bold shrink-0 animate-pulse";
+        if (extraText) textSpan.innerHTML = extraText;
+      } else if (status === "success") {
+        stepEl.className =
+          "flex items-center gap-3 text-slate-500 font-medium text-sm opacity-80";
+        indicator.className =
+          "step-indicator w-6 h-6 rounded-full border border-emerald-600 flex items-center justify-center bg-emerald-50 text-xs text-emerald-600 font-bold shrink-0";
+        indicator.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>`;
+        if (extraText) textSpan.innerHTML = extraText;
+      } else {
+        stepEl.className =
+          "flex items-center gap-3 text-slate-400 font-medium text-sm";
+        indicator.className =
+          "step-indicator w-6 h-6 rounded-full border border-slate-300 flex items-center justify-center bg-white text-xs text-slate-400 shrink-0";
+      }
+    }
+
+    // Reset step tracker indicators to initial state
+    function resetStepTracker() {
+      Object.keys(steps).forEach((key) => {
+        updateStepUI(key, "idle");
+        const defaultIndex =
+          key === "connect"
+            ? "1"
+            : key === "r2"
+              ? "2"
+              : key === "github"
+                ? "3"
+                : "4";
+        steps[key].querySelector(".step-indicator").innerHTML = defaultIndex;
+      });
+      progressBar.style.width = "5%";
+    }
+
+    // Multi-phase animated scanner — calls API in small batches to avoid Worker CPU limits
+    async function animateProgress(onFinishCallback) {
+      resetStepTracker();
+
+      try {
+        // ── Phase 1: Init — fetch R2 objects + post/story counts ──
+        updateStepUI("connect", "active");
+        progressBar.style.width = "10%";
+
+        const initRes = await fetch("/api/manage-media?phase=init");
+        const initData = await initRes.json();
+        if (!initRes.ok || !initData.success) {
+          throw new Error(initData.error || "Failed to initialize scan.");
+        }
+
+        updateStepUI("connect", "success");
+        updateStepUI("r2", "active", `Found ${initData.r2Items.length} R2 objects`);
+        progressBar.style.width = "20%";
+        await sleep(300);
+        updateStepUI("r2", "success", `Found ${initData.r2Items.length} R2 objects`);
+
+        const r2Items = initData.r2Items;
+        const r2Keys = r2Items.map((item) => item.key);
+        const totalPostPages = initData.totalPostPages || 0;
+        const totalStoryPages = initData.totalStoryPages || 0;
+        const totalPhases = totalPostPages + totalStoryPages;
+
+        // Usage tracking maps
+        const usageMap = {}; // key → [{ type, slug, title, path, url? }]
+        r2Keys.forEach((k) => (usageMap[k] = []));
+
+        // ── Phase 2: Scan posts in batches ──
+        updateStepUI("github", "active", `Scanning posts: 0/${initData.totalPosts}...`);
+        progressBar.style.width = "25%";
+
+        // Split r2Keys into chunks of 200 for POST body (avoid overly large payloads)
+        const KEY_CHUNK = 200;
+        for (let page = 0; page < totalPostPages; page++) {
+          // Send r2Keys via POST body to avoid URL length issues
+          const scanRes = await fetch(`/api/manage-media?phase=scanPosts&page=${page}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ r2keys: r2Keys }),
+          });
+          const scanData = await scanRes.json();
+          if (!scanRes.ok || !scanData.success) {
+            console.warn(`Post scan page ${page} failed:`, scanData.error);
+            continue;
+          }
+
+          // Merge post usage details
+          if (scanData.postDetails) {
+            for (const detail of scanData.postDetails) {
+              if (usageMap[detail.key]) {
+                usageMap[detail.key].push({
+                  type: "post",
+                  slug: detail.slug,
+                  title: detail.title,
+                  path: detail.path,
+                });
+              }
+            }
+          }
+
+          const pctDone = 25 + ((page + 1) / totalPhases) * 65;
+          progressBar.style.width = Math.min(pctDone, 90) + "%";
+          const scannedPosts = Math.min((page + 1) * 15, initData.totalPosts);
+          updateStepUI("github", "active", `Scanning posts: ${scannedPosts}/${initData.totalPosts}...`);
+        }
+
+        updateStepUI("github", "success", `Scanned ${initData.totalPosts} posts`);
+
+        // ── Phase 3: Scan stories in batches ──
+        updateStepUI("scan", "active", `Scanning stories: 0/${initData.totalStories}...`);
+
+        for (let page = 0; page < totalStoryPages; page++) {
+          const scanRes = await fetch(`/api/manage-media?phase=scanStories&page=${page}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ r2keys: r2Keys }),
+          });
+          const scanData = await scanRes.json();
+          if (!scanRes.ok || !scanData.success) {
+            console.warn(`Story scan page ${page} failed:`, scanData.error);
+            continue;
+          }
+
+          // Merge story usage details
+          if (scanData.storyDetails) {
+            for (const detail of scanData.storyDetails) {
+              if (usageMap[detail.key]) {
+                usageMap[detail.key].push({
+                  type: "story",
+                  slug: detail.slug,
+                  title: detail.title,
+                  path: detail.path,
+                  url: detail.url,
+                });
+              }
+            }
+          }
+
+          const pctDone = 25 + ((totalPostPages + page + 1) / totalPhases) * 65;
+          progressBar.style.width = Math.min(pctDone, 95) + "%";
+          const scannedStories = Math.min((page + 1) * 15, initData.totalStories);
+          updateStepUI("scan", "active", `Scanning stories: ${scannedStories}/${initData.totalStories}...`);
+        }
+
+        // ── Build final images array ──
+        images = r2Items.map((item) => ({
+          ...item,
+          usedIn: usageMap[item.key] || [],
+        }));
+
+        progressBar.style.width = "100%";
+        updateStepUI(
+          "scan",
+          "success",
+          "Scan finished! Displaying analyzed storage details.",
+        );
+        await sleep(400);
+
+        onFinishCallback(true);
+      } catch (err) {
+        onFinishCallback(false, err.message);
+      }
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function fetchStorageData() {
+      // Setup UI States
+      initialState.classList.add("hidden");
+      errorPanel.classList.add("hidden");
+      statsSection.classList.add("hidden");
+      dataPanel.classList.add("hidden");
+
+      fetchProgressPanel.classList.remove("hidden");
+      btnLiveFetch.disabled = true;
+      btnLiveFetch.classList.add("opacity-70", "cursor-not-allowed");
+      fetchIcon.classList.add("animate-spin");
+
+      animateProgress((success, errMsg) => {
+        btnLiveFetch.disabled = false;
+        btnLiveFetch.classList.remove("opacity-70", "cursor-not-allowed");
+        fetchIcon.classList.remove("animate-spin");
+        fetchProgressPanel.classList.add("hidden");
+
+        if (success) {
+          renderStats();
+          renderImages();
+
+          statsSection.classList.remove("hidden");
+          statsSection.classList.add("fade-in");
+          dataPanel.classList.remove("hidden");
+          dataPanel.classList.add("fade-in");
+        } else {
+          errorText.textContent =
+            errMsg || "An error occurred during file scanning.";
+          errorPanel.classList.remove("hidden");
+          errorPanel.classList.add("fade-in");
+        }
+      });
+    }
+
+    // Helper: Byte size formatter
+    function formatBytes(bytes) {
+      if (bytes === 0) return "0 B";
+      const k = 1024;
+      const sizes = ["B", "KB", "MB", "GB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+    }
+
+    // Helper: Date formatter
+    function formatDate(dateStr) {
+      if (!dateStr) return "—";
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return "—";
+
+      // Nice relative duration
+      const diffMs = new Date().getTime() - date.getTime();
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHr = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHr / 24);
+
+      let relative = "";
+      if (diffSec < 60) relative = "Just now";
+      else if (diffMin < 60) relative = `${diffMin}m ago`;
+      else if (diffHr < 24) relative = `${diffHr}h ago`;
+      else if (diffDay < 30) relative = `${diffDay}d ago`;
+      else
+        relative = date.toLocaleDateString("en-IN", {
+          month: "short",
+          day: "numeric",
+        });
+
+      const fullDate = date.toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      return `<span class="block font-medium text-[#1e293b] text-xs">${fullDate}</span><span class="block text-[10px] text-slate-400 mt-0.5">${relative}</span>`;
+    }
+
+    function renderStats() {
+      const totalCount = images.length;
+      let totalSize = 0;
+      let usedCount = 0;
+      let unusedCount = 0;
+
+      images.forEach((img) => {
+        totalSize += img.size || 0;
+        if (img.usedIn && img.usedIn.length > 0) {
+          usedCount++;
+        } else {
+          unusedCount++;
+        }
+      });
+
+      statTotalCount.textContent = totalCount;
+      statTotalSize.textContent = formatBytes(totalSize);
+      statUsedCount.textContent = usedCount;
+      statUnusedCount.textContent = unusedCount;
+
+      // Update counters in tabs
+      tabCountAll.textContent = totalCount;
+      tabCountUsed.textContent = usedCount;
+      tabCountUnused.textContent = unusedCount;
+
+      // Highlight unused images card in red if there are any
+      if (unusedCount > 0) {
+        statUnusedWrapper.className =
+          "bg-red-50 text-red-600 p-3 rounded-xl transition-colors duration-300";
+      } else {
+        statUnusedWrapper.className =
+          "bg-emerald-50 text-emerald-600 p-3 rounded-xl transition-colors duration-300";
+      }
+    }
+
+    function selectFilter(filter) {
+      currentFilter = filter;
+
+      // Update Tab Styles
+      [tabAll, tabUsed, tabUnused].forEach((btn) => {
+        btn.className =
+          "tab-btn px-4 py-1.5 rounded-md font-semibold text-xs transition-all text-slate-600 hover:text-slate-900";
+      });
+
+      const activeBtn =
+        filter === "all" ? tabAll : filter === "used" ? tabUsed : tabUnused;
+      activeBtn.className =
+        "tab-btn px-4 py-1.5 rounded-md font-semibold text-xs transition-all bg-white text-slate-800 shadow-sm border border-slate-200/50";
+
+      renderImages();
+    }
+
+    function renderImages() {
+      const query = searchQuery.value.toLowerCase().trim();
+      imagesTableBody.innerHTML = "";
+
+      // Filter images based on selected tab and search input
+      const filtered = images.filter((img) => {
+        // Tab check
+        const isUsed = img.usedIn && img.usedIn.length > 0;
+        if (currentFilter === "used" && !isUsed) return false;
+        if (currentFilter === "unused" && isUsed) return false;
+
+        // Search check
+        if (query && !img.key.toLowerCase().includes(query)) return false;
+
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        tableEmptyState.classList.remove("hidden");
+        return;
+      }
+      tableEmptyState.classList.add("hidden");
+
+      filtered.forEach((img) => {
+        const isUsed = img.usedIn && img.usedIn.length > 0;
+
+        // Create references cell html
+        let referencesHtml = "";
+        if (isUsed) {
+          const links = img.usedIn
+            .map((p) => {
+              if (p.type === 'story') {
+                return `
+                  <a 
+                    href="${p.url || `https://webstory.YOUR-DOMAIN.com/${p.path}`}" 
+                    target="_blank"
+                    class="post-item-link inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-purple-600 border border-purple-100 rounded bg-purple-50/50"
+                    title="View Web Story"
+                  >
+                    <svg class="w-3 h-3 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                    <span>${p.title}</span>
+                  </a>
+                `;
+              } else {
+                return `
+                  <a 
+                    href="/edit?file=${encodeURIComponent(p.path)}" 
+                    class="post-item-link inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-[#1a73e8] border border-blue-100 rounded bg-blue-50/50"
+                    title="Edit Post"
+                  >
+                    <svg class="w-3 h-3 text-[#1a73e8]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                    <span>${p.title}</span>
+                  </a>
+                `;
+              }
+            })
+            .join("");
+
+          const postsCount = img.usedIn.filter(p => p.type === 'post').length;
+          const storiesCount = img.usedIn.filter(p => p.type === 'story').length;
+          
+          let countText = "";
+          if (postsCount > 0 && storiesCount > 0) {
+            countText = `Used in ${postsCount} post${postsCount > 1 ? "s" : ""} & ${storiesCount} story${storiesCount > 1 ? "ies" : ""}`;
+          } else if (postsCount > 0) {
+            countText = `Used in ${postsCount} post${postsCount > 1 ? "s" : ""}`;
+          } else {
+            countText = `Used in ${storiesCount} story${storiesCount > 1 ? "ies" : ""}`;
+          }
+
+          referencesHtml = `
+            <div class="space-y-1.5">
+              <span class="badge-used px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+                <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                ${countText}
+              </span>
+              <div class="flex flex-wrap gap-1.5 mt-1.5">${links}</div>
+            </div>
+          `;
+        } else {
+          referencesHtml = `
+            <span class="badge-unused px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+              <span class="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping"></span>
+              Unused / Orphaned
+            </span>
+          `;
+        }
+
+        // Action Column: Delete button or Lock icon
+        let actionsHtml = "";
+        if (!isUsed) {
+          actionsHtml = `
+            <button 
+              class="btn-delete-row w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center mx-auto transition-all" 
+              data-key="${img.key}"
+              data-type="${img.type || 'image'}"
+              title="Delete from R2 Bucket"
+            >
+              <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          `;
+        } else {
+          actionsHtml = `
+            <div 
+              class="w-8 h-8 rounded-lg text-slate-300 flex items-center justify-center mx-auto cursor-not-allowed" 
+              title="In use. Cannot delete."
+            >
+              <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 10-8 0v4h8z" />
+              </svg>
+            </div>
+          `;
+        }
+
+        // Table Row DOM
+        const tr = document.createElement("tr");
+        tr.className =
+          "border-b border-[#e2e8f0] hover:bg-slate-50/50 transition-colors duration-150 align-top";
+        tr.innerHTML = `
+          <td class="px-6 py-4">
+            <div class="table-img-container w-12 h-12 rounded-lg border border-slate-200 flex items-center justify-center cursor-pointer shadow-xs shrink-0 overflow-hidden bg-slate-50">
+              ${img.type === 'video' ? `
+                <div class="relative w-full h-full flex items-center justify-center bg-slate-900 text-white" onclick="window.open('${img.url}', '_blank')">
+                  <svg class="w-6 h-6 text-slate-100" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                </div>
+              ` : `
+                <img 
+                  src="${img.url}" 
+                  alt="${img.key}" 
+                  class="w-full h-full object-cover" 
+                  loading="lazy"
+                  onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' fill=\\'none\\' stroke=\\'%2394a3b8\\' stroke-width=\\'2\\' viewBox=\\'0 0 24 24\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' d=\\'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z\\'/></svg>';"
+                  onclick="window.open('${img.url}', '_blank')"
+                />
+              `}
+            </div>
+          </td>
+          <td class="px-6 py-4">
+            <span class="block font-bold text-slate-800 text-xs break-all select-all">${img.key}</span>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${img.type === 'video' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}">
+                ${img.type || 'image'}
+              </span>
+              <a 
+                href="${img.url}" 
+                target="_blank" 
+                class="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-700 hover:underline font-semibold"
+              >
+                <span>View Source</span>
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+              </a>
+            </div>
+          </td>
+          <td class="px-6 py-4 text-xs font-semibold text-slate-600">
+            ${formatBytes(img.size)}
+          </td>
+          <td class="px-6 py-4 text-xs text-slate-500">
+            ${formatDate(img.uploaded)}
+          </td>
+          <td class="px-6 py-4 text-xs">
+            ${referencesHtml}
+          </td>
+          <td class="px-6 py-4 text-center">
+            ${actionsHtml}
+          </td>
+        `;
+
+        // Register Delete event
+        const delBtn = tr.querySelector(".btn-delete-row");
+        if (delBtn) {
+          delBtn.addEventListener("click", (e) => {
+            const key = e.currentTarget.getAttribute("data-key");
+            const type = e.currentTarget.getAttribute("data-type");
+            openDeleteModal(key, type);
+          });
+        }
+
+        imagesTableBody.appendChild(tr);
+      });
+    }
+
+    // Modal Control Functions
+    function openDeleteModal(key, type) {
+      keyToDelete = key;
+      typeToDelete = type;
+      deleteTargetKey.textContent = key;
+
+      deleteModal.classList.remove("hidden");
+      setTimeout(() => {
+        deleteModalCard.classList.remove("scale-95", "opacity-0");
+        deleteModalCard.classList.add("scale-100", "opacity-100");
+      }, 50);
+    }
+
+    function closeDeleteModal() {
+      deleteModalCard.classList.remove("scale-100", "opacity-100");
+      deleteModalCard.classList.add("scale-95", "opacity-0");
+
+      setTimeout(() => {
+        deleteModal.classList.add("hidden");
+        keyToDelete = null;
+        typeToDelete = null;
+
+        // Reset confirm button state
+        btnDeleteConfirm.disabled = false;
+        btnDeleteConfirm.classList.remove("opacity-70", "cursor-not-allowed");
+        btnDeleteConfirmText.innerHTML = "Delete Item";
+      }, 200);
+    }
+
+    async function confirmDelete() {
+      if (!keyToDelete) return;
+
+      // Update button loading state
+      btnDeleteConfirm.disabled = true;
+      btnDeleteConfirm.classList.add("opacity-70", "cursor-not-allowed");
+      btnDeleteConfirmText.innerHTML = `
+        <svg class="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        Deleting...
+      `;
+
+      try {
+        const response = await fetch("/api/manage-media", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ key: keyToDelete, type: typeToDelete }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          // Remove deleted image from local memory
+          images = images.filter((img) => img.key !== keyToDelete);
+
+          // Re-render UI
+          renderStats();
+          renderImages();
+
+          closeDeleteModal();
+        } else {
+          alert("Delete failed: " + (data.error || "Unknown error occurred."));
+          closeDeleteModal();
+        }
+      } catch (err) {
+        alert("Delete error: " + err.message);
+        closeDeleteModal();
+      }
+    }
+  })();
+</script>

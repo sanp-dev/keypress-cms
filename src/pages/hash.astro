@@ -1,0 +1,504 @@
+---
+// src/pages/hash.astro
+// ⚠️ This page is intentionally outside DashboardLayout — standalone, full-screen like the login page
+
+const user = Astro.locals.user;
+
+// Only admin is allowed here
+if (!user || user.role !== 'admin') {
+  return Astro.redirect('/');
+}
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hash Generator — The Smart Advice Dashboard</title>
+  <style is:global>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #0f1117;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #e2e8f0;
+      padding: 2.5rem 1rem;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+    }
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 1rem; color: #fff;
+      flex-shrink: 0;
+    }
+    .logo-name { font-size: 1.15rem; font-weight: 700; color: #f1f5f9; }
+    .logo-sub  { font-size: .72rem; color: #475569; margin-top: 1px; }
+
+    .back-link {
+      font-size: .82rem; color: #94a3b8; text-decoration: none;
+      display: flex; align-items: center; gap: .35rem;
+    }
+    .back-link:hover { color: #e2e8f0; }
+
+    .tabs {
+      display: flex; gap: .5rem;
+      background: #1a1d27; border: 1px solid #2d3148;
+      border-radius: 10px; padding: .3rem;
+    }
+    .tab-btn {
+      flex: 1; padding: .55rem .75rem;
+      background: transparent; border: none; border-radius: 7px;
+      color: #94a3b8; font-size: .85rem; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+    }
+    .tab-btn.active {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+    }
+
+    .card {
+      width: 100%;
+      padding: 2rem;
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      box-shadow: 0 25px 50px rgba(0,0,0,.5);
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: .4rem; }
+    .desc { font-size: .85rem; color: #64748b; margin-bottom: 1.75rem; line-height: 1.6; }
+
+    label { display: block; font-size: .8rem; font-weight: 500;
+            color: #94a3b8; margin-bottom: .4rem; }
+    .field { margin-bottom: 1.1rem; }
+
+    input[type="password"], input[type="email"], select {
+      width: 100%; padding: .7rem 1rem;
+      background: #0f1117; border: 1px solid #2d3148;
+      border-radius: 8px; color: #e2e8f0;
+      font-size: .95rem; outline: none;
+      transition: border-color .2s;
+      font-family: inherit;
+    }
+    input:focus, select:focus { border-color: #6366f1; }
+
+    .btn-gen {
+      width: 100%; padding: .75rem;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none; border-radius: 8px; color: #fff;
+      font-size: 1rem; font-weight: 600; cursor: pointer;
+      transition: opacity .2s;
+    }
+    .btn-gen:hover { opacity: .88; }
+    .btn-gen:disabled { opacity: .5; cursor: not-allowed; }
+
+    .btn-secondary {
+      width: 100%; padding: .65rem;
+      background: #2d3148; border: none; border-radius: 8px;
+      color: #e2e8f0; font-size: .88rem; font-weight: 600; cursor: pointer;
+      transition: background .2s;
+      margin-top: .6rem;
+    }
+    .btn-secondary:hover { background: #3d4168; }
+
+    .result-box {
+      display: none;
+      margin-top: 1.5rem;
+      background: #0f1117; border: 1px solid #2d3148;
+      border-radius: 8px; padding: 1.1rem;
+    }
+    .result-box.show { display: block; }
+
+    .result-label { font-size: .75rem; color: #64748b; margin-bottom: .5rem; }
+    .hash-value, .json-value {
+      font-family: monospace; font-size: .78rem;
+      color: #86efac; word-break: break-all;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .btn-copy {
+      margin-top: .85rem; padding: .5rem 1rem;
+      background: #2d3148; border: none; border-radius: 6px;
+      color: #e2e8f0; cursor: pointer; font-size: .85rem;
+      transition: background .2s;
+    }
+    .btn-copy:hover { background: #3d4168; }
+
+    .warn {
+      margin-top: 1.5rem; padding: .9rem 1rem;
+      background: #1c1a0a; border: 1px solid #78350f;
+      border-radius: 8px; font-size: .8rem;
+      color: #fcd34d; line-height: 1.6;
+    }
+
+    .err { color: #f87171; font-size: .85rem;
+           margin-top: .6rem; display: none; }
+    .err.show { display: block; }
+
+    /* ── Multi-user builder ─────────────────────────────────────────── */
+    .user-row {
+      background: #0f1117; border: 1px solid #2d3148;
+      border-radius: 10px; padding: 1.25rem;
+      margin-bottom: 1rem;
+      position: relative;
+    }
+    .user-row-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1rem;
+      padding-bottom: .75rem;
+      border-bottom: 1px solid #2d3148;
+    }
+    .user-row-title { font-size: .82rem; font-weight: 700; color: #c7d2fe; }
+    .btn-remove {
+      background: transparent; border: none; color: #f87171;
+      cursor: pointer; font-size: .78rem; font-weight: 600;
+      padding: .25rem .4rem;
+    }
+    .btn-remove:hover { text-decoration: underline; }
+
+    .user-row .field { margin-bottom: .9rem; }
+    .user-row .field:last-child,
+    .user-row .grid-2 .field { margin-bottom: 0; }
+
+    .user-row label {
+      display: block;
+      font-size: .75rem; font-weight: 500;
+      color: #94a3b8; margin-bottom: .35rem;
+    }
+
+    .grid-2 {
+      display: grid; grid-template-columns: 1fr 1fr; gap: .75rem;
+      margin-top: .9rem;
+    }
+    @media (max-width: 480px) {
+      .grid-2 { grid-template-columns: 1fr; gap: .9rem; }
+    }
+
+    .btn-add {
+      width: 100%; padding: .65rem;
+      background: transparent; border: 1px dashed #3d4168;
+      border-radius: 8px; color: #94a3b8; font-size: .85rem; font-weight: 600;
+      cursor: pointer; margin-bottom: 1.25rem;
+      transition: all .2s;
+    }
+    .btn-add:hover { border-color: #6366f1; color: #c7d2fe; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-icon">TSA</div>
+        <div>
+          <div class="logo-name">The Smart Advice</div>
+          <div class="logo-sub">Hash Generator</div>
+        </div>
+      </div>
+      <a href="/" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" id="tabSingle" type="button">🔐 Single Hash</button>
+      <button class="tab-btn" id="tabMulti" type="button">👥 Users JSON Array</button>
+    </div>
+
+    <div class="card">
+
+      <!-- ── Panel 1: Single hash ─────────────────────────────────────── -->
+      <div class="panel active" id="panelSingle">
+        <h2>🔐 Password Hash Generator</h2>
+        <p class="desc">
+          Enter a new password → Generate the hash → Paste it into USERS_JSON.<br/>
+          The plain password is never saved anywhere.
+        </p>
+
+        <div class="field">
+          <label>New Password</label>
+          <input type="password" id="pw1" placeholder="Type the new password" />
+        </div>
+
+        <div class="field">
+          <label>Confirm Password</label>
+          <input type="password" id="pw2" placeholder="Type it again" />
+        </div>
+
+        <p class="err" id="errMsgSingle"></p>
+
+        <button class="btn-gen" id="btnGenSingle" type="button">
+          Generate Hash
+        </button>
+
+        <div class="result-box" id="resultBoxSingle">
+          <div class="result-label">Generated Hash — paste this into USERS_JSON:</div>
+          <div class="hash-value" id="hashOutSingle"></div>
+          <button class="btn-copy" id="btnCopySingle" type="button">📋 Copy Hash</button>
+        </div>
+      </div>
+
+      <!-- ── Panel 2: Multi-user JSON array ──────────────────────────── -->
+      <div class="panel" id="panelMulti">
+        <h2>👥 USERS_JSON Array Builder</h2>
+        <p class="desc">
+          Enter the email, password, and role for each user → the full JSON array will be generated,
+          ready to paste directly into <code>wrangler secret put USERS_JSON</code>.
+        </p>
+
+        <div id="userRows"></div>
+
+        <button class="btn-add" id="btnAddUser" type="button">+ Add Another User</button>
+
+        <p class="err" id="errMsgMulti"></p>
+
+        <button class="btn-gen" id="btnGenMulti" type="button">
+          Generate Users JSON
+        </button>
+
+        <div class="result-box" id="resultBoxMulti">
+          <div class="result-label">Generated USERS_JSON — copy the full array:</div>
+          <div class="json-value" id="jsonOutMulti"></div>
+          <button class="btn-copy" id="btnCopyMulti" type="button">📋 Copy JSON</button>
+        </div>
+      </div>
+
+      <div class="warn">
+        ⚠️ The hash/JSON will disappear if this page is reloaded.<br/>
+        Paste it into the Cloudflare Dashboard right after copying it.<br/>
+        Do not share this page's URL with anyone.
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ──────────────────────────────────────────────────────────────────
+    // Tabs
+    // ──────────────────────────────────────────────────────────────────
+    const tabSingle    = document.getElementById('tabSingle') as HTMLButtonElement;
+    const tabMulti      = document.getElementById('tabMulti') as HTMLButtonElement;
+    const panelSingle   = document.getElementById('panelSingle') as HTMLElement;
+    const panelMulti    = document.getElementById('panelMulti') as HTMLElement;
+
+    function showTab(which: 'single' | 'multi') {
+      const isSingle = which === 'single';
+      tabSingle.classList.toggle('active', isSingle);
+      tabMulti.classList.toggle('active', !isSingle);
+      panelSingle.classList.toggle('active', isSingle);
+      panelMulti.classList.toggle('active', !isSingle);
+    }
+    tabSingle.addEventListener('click', () => showTab('single'));
+    tabMulti.addEventListener('click', () => showTab('multi'));
+
+    // ──────────────────────────────────────────────────────────────────
+    // Shared crypto helper — same PBKDF2 hash as used on the server
+    // ──────────────────────────────────────────────────────────────────
+    async function makeHash(password: string): Promise<string> {
+      const enc     = new TextEncoder();
+      const saltArr = crypto.getRandomValues(new Uint8Array(16));
+
+      const keyMat = await crypto.subtle.importKey(
+        'raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']
+      );
+      const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt: saltArr, iterations: 100000, hash: 'SHA-256' },
+        keyMat,
+        256
+      );
+
+      const toHex = (arr: ArrayLike<number>) =>
+        Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+      return `${toHex(saltArr)}:${toHex(new Uint8Array(bits))}`;
+    }
+
+    function showErr(elId: string, msg: string) {
+      const el = document.getElementById(elId) as HTMLElement;
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function hideErr(elId: string) {
+      (document.getElementById(elId) as HTMLElement).classList.remove('show');
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Panel 1: Single Hash
+    // ──────────────────────────────────────────────────────────────────
+    let lastHash = '';
+
+    async function generateHash() {
+      hideErr('errMsgSingle');
+      const pw1 = (document.getElementById('pw1') as HTMLInputElement).value;
+      const pw2 = (document.getElementById('pw2') as HTMLInputElement).value;
+
+      if (!pw1)            { showErr('errMsgSingle', 'Password is empty.'); return; }
+      if (pw1 !== pw2)     { showErr('errMsgSingle', 'The two passwords do not match.'); return; }
+      if (pw1.length < 8)  { showErr('errMsgSingle', 'Must be at least 8 characters.'); return; }
+
+      lastHash = await makeHash(pw1);
+
+      (document.getElementById('hashOutSingle') as HTMLElement).textContent = lastHash;
+      (document.getElementById('resultBoxSingle') as HTMLElement).classList.add('show');
+    }
+
+    function copyHash() {
+      if (!lastHash) return;
+      navigator.clipboard.writeText(lastHash).then(() => {
+        const btn = document.getElementById('btnCopySingle') as HTMLButtonElement;
+        const original = btn.textContent;
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => (btn.textContent = original), 2500);
+      });
+    }
+
+    (document.getElementById('btnGenSingle') as HTMLButtonElement)
+      .addEventListener('click', generateHash);
+    (document.getElementById('btnCopySingle') as HTMLButtonElement)
+      .addEventListener('click', copyHash);
+
+    // ──────────────────────────────────────────────────────────────────
+    // Panel 2: Multi-user JSON Array Builder
+    // ──────────────────────────────────────────────────────────────────
+    const userRowsEl = document.getElementById('userRows') as HTMLElement;
+    let rowCount = 0;
+
+    function addUserRow() {
+      rowCount++;
+      const id = rowCount;
+      const row = document.createElement('div');
+      row.className = 'user-row';
+      row.dataset.rowId = String(id);
+      row.innerHTML = `
+        <div class="user-row-head">
+          <span class="user-row-title">User #${id}</span>
+          <button type="button" class="btn-remove" data-remove="${id}">✕ Remove</button>
+        </div>
+        <div class="field" style="margin-bottom: 0;">
+          <label>Email</label>
+          <input type="email" class="u-email" placeholder="user@yourdomain.com" />
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Password</label>
+            <input type="password" class="u-password" placeholder="At least 8 characters" />
+          </div>
+          <div class="field">
+            <label>Role</label>
+            <select class="u-role">
+              <option value="admin">admin</option>
+              <option value="assistant" selected>assistant</option>
+            </select>
+          </div>
+        </div>
+      `;
+      userRowsEl.appendChild(row);
+
+      const removeBtn = row.querySelector('[data-remove]') as HTMLButtonElement;
+      removeBtn.addEventListener('click', () => row.remove());
+    }
+
+    // Show 1 row at the start
+    addUserRow();
+
+    (document.getElementById('btnAddUser') as HTMLButtonElement)
+      .addEventListener('click', addUserRow);
+
+    let lastJson = '';
+
+    async function generateUsersJson() {
+      hideErr('errMsgMulti');
+
+      const rows = Array.from(userRowsEl.querySelectorAll('.user-row'));
+      if (rows.length === 0) {
+        showErr('errMsgMulti', 'Add at least one user.');
+        return;
+      }
+
+      const genBtn = document.getElementById('btnGenMulti') as HTMLButtonElement;
+      genBtn.disabled = true;
+      genBtn.textContent = 'Generating...';
+
+      try {
+        const results: { email: string; hash: string; role: string }[] = [];
+        const seenEmails = new Set<string>();
+
+        for (const row of rows) {
+          const emailEl = row.querySelector('.u-email') as HTMLInputElement;
+          const pwEl    = row.querySelector('.u-password') as HTMLInputElement;
+          const roleEl  = row.querySelector('.u-role') as HTMLSelectElement;
+
+          const email = emailEl.value.trim();
+          const pw    = pwEl.value;
+          const role  = roleEl.value;
+
+          if (!email) { showErr('errMsgMulti', 'Email is required for every user.'); return; }
+          if (!pw)    { showErr('errMsgMulti', `Password is empty for "${email}".`); return; }
+          if (pw.length < 8) {
+            showErr('errMsgMulti', `The password for "${email}" must be at least 8 characters.`);
+            return;
+          }
+          const emailLower = email.toLowerCase();
+          if (seenEmails.has(emailLower)) {
+            showErr('errMsgMulti', `Duplicate email found: "${email}"`);
+            return;
+          }
+          seenEmails.add(emailLower);
+
+          const hash = await makeHash(pw);
+          results.push({ email, hash, role });
+        }
+
+        lastJson = JSON.stringify(results);
+        (document.getElementById('jsonOutMulti') as HTMLElement).textContent = lastJson;
+        (document.getElementById('resultBoxMulti') as HTMLElement).classList.add('show');
+      } finally {
+        genBtn.disabled = false;
+        genBtn.textContent = 'Generate Users JSON';
+      }
+    }
+
+    function copyJson() {
+      if (!lastJson) return;
+      navigator.clipboard.writeText(lastJson).then(() => {
+        const btn = document.getElementById('btnCopyMulti') as HTMLButtonElement;
+        const original = btn.textContent;
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => (btn.textContent = original), 2500);
+      });
+    }
+
+    (document.getElementById('btnGenMulti') as HTMLButtonElement)
+      .addEventListener('click', generateUsersJson);
+    (document.getElementById('btnCopyMulti') as HTMLButtonElement)
+      .addEventListener('click', copyJson);
+  </script>
+</body>
+</html>

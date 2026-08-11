@@ -1,0 +1,190 @@
+---
+// src/pages/edit.astro
+//
+// Flow:
+//   /edit?file=<github-path-to-.md>
+//     1. Fetch raw file + sha from GitHub (via lib/github.ts)
+//     2. Parse the YAML frontmatter (title, description, category, image, etc.)
+//     3. Build a draft object in the exact shape write.astro expects
+//     4. Save it into CACHE_KV under the same key write.astro reads on load
+//     5. Redirect to /write — write.astro's initDraftLoad() picks it up automatically
+//
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import { sitesConfig, getActiveSite } from '../config/sitesConfig';
+import { getFileContent } from '../lib/github';
+import { env } from 'cloudflare:workers';
+
+const activeSite = getActiveSite();
+const token = env?.GITHUB_PAT || import.meta.env.GITHUB_PAT;
+const reqUrl = new URL(Astro.request.url);
+const fileParam = reqUrl.searchParams.get('file') || '';
+const filePath = (fileParam && !fileParam.includes('/'))
+  ? `${activeSite.contentPath}/${fileParam}`
+  : fileParam;
+
+const userEmail = Astro.locals.user?.email || 'anonymous';
+const DRAFT_KEY = filePath 
+  ? `draft:cms:write-article:${userEmail}:${filePath}`
+  : `draft:cms:write-article:${userEmail}:new`;
+
+let errorTitle = '';
+let errorMsg = '';
+
+// ─── Frontmatter Parser ─────────────────────────────────────────────────────
+// Tailored to the exact template write.astro generates on publish:
+//   ---
+//   title: "..."
+//   description: "..."
+//   pubDate: 2026-06-27T10:00:00.000Z
+//   category: "..."
+//   image: "..."
+//   image_caption: "..."
+//   author: "..."
+//   tags: ["tag1", "tag2"]
+//   ai_summary: "..."
+//   ---
+//   <body markdown>
+function parseFrontmatter(raw: string) {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    return { fm: {} as Record<string, any>, body: raw };
+  }
+
+  const block = match[1];
+  const body = match[2].replace(/^\s+/, '');
+
+  const getQuoted = (key: string): string => {
+    const re = new RegExp(`^${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'm');
+    const m = block.match(re);
+    return m ? m[1].replace(/\\"/g, '"') : '';
+  };
+
+  const getRawLine = (key: string): string => {
+    const re = new RegExp(`^${key}:\\s*(.+)$`, 'm');
+    const m = block.match(re);
+    return m ? m[1].replace(/\r$/, '').trim() : '';
+  };
+
+  const tagsRaw = getRawLine('tags');
+  const tagsInner = tagsRaw.replace(/^\[/, '').replace(/\]$/, '').trim();
+  const tags = tagsInner
+    ? tagsInner.split(',').map((t) => t.trim().replace(/^"|"$/g, '')).filter(Boolean)
+    : [];
+
+  return {
+    fm: {
+      title: getQuoted('title'),
+      description: getQuoted('description'),
+      category: getQuoted('category'),
+      image: getQuoted('image'),
+      image_caption: getQuoted('image_caption'),
+      author: getQuoted('author'),
+      ai_summary: getQuoted('ai_summary'),
+      tags,
+    },
+    body,
+  };
+}
+
+if (!filePath) {
+  errorTitle = 'No Article Specified';
+  errorMsg = 'The edit link is missing a "file" parameter.';
+} else if (!token) {
+  errorTitle = 'Configuration Error';
+  errorMsg = 'GITHUB_PAT is not configured for this Worker.';
+} else {
+  try {
+    const fileData = await getFileContent(
+      activeSite.githubOwner,
+      activeSite.githubRepo,
+      filePath,
+      token
+    );
+
+    if (!fileData) {
+      errorTitle = 'Article Not Found';
+      errorMsg = `Could not fetch "${filePath}" from GitHub. It may have been deleted, renamed, or the repo path is wrong.`;
+    } else {
+      const { content: raw, sha } = fileData;
+
+      // Smart Draft Restoration Strategy:
+      const existingDraftRaw = await env.CACHE_KV.get(DRAFT_KEY);
+      if (existingDraftRaw) {
+        try {
+          const existingDraft = JSON.parse(existingDraftRaw);
+          if (existingDraft && existingDraft._editSha === sha) {
+            // The existing draft's base commit matches current GitHub version.
+            // Restore draft by redirecting directly to /write with the file parameter.
+            const shortFile = filePath.includes('/') ? filePath.split('/').pop() : filePath;
+            return Astro.redirect(`/write?file=${encodeURIComponent(shortFile)}`, 302);
+          }
+        } catch (e) {
+          console.error('Error parsing existing draft:', e);
+        }
+      }
+
+      const { fm, body } = parseFrontmatter(raw);
+
+      const fileName = filePath.split('/').pop() || '';
+      const slug = fileName.replace(/\.mdx?$/, '');
+
+      // The editor template carries the H1 title separately in the Title input field,
+      // so we pass the body content as-is to avoid duplicate H1 in the editor.
+      const markdownView = body;
+
+      const draft = {
+        postTitle: fm.title || '',
+        composeView: '',
+        markdownView,
+        metaSlug: slug,
+        metaDesc: fm.description || '',
+        metaCat: fm.category || '',
+        metaTags: (fm.tags || []).join(', '),
+        metaImage: fm.image || '',
+        imgAltText: '',
+        imgTitleText: '',
+        aiImgPrompt: '',
+        metaAiSummary: fm.ai_summary || '',
+        metaAuthor: fm.author || 'Sandhata Prajapati',
+        metaImageCaption: fm.image_caption || '',
+        timestamp: new Date().toISOString(),
+        // Edit-mode markers — read by write.astro to know this is an update,
+        // not a brand-new article (needed so /api/publish can PUT with sha
+        // instead of failing with a GitHub "sha required" conflict).
+        _editSha: sha,
+        _editOriginalPath: filePath,
+      };
+
+      await env.CACHE_KV.put(DRAFT_KEY, JSON.stringify(draft), {
+        expirationTtl: 2592000, // 30 days, same as draft.ts
+      });
+
+      const shortFile = filePath.includes('/') ? filePath.split('/').pop() : filePath;
+      return Astro.redirect(`/write?file=${encodeURIComponent(shortFile)}`, 302);
+    }
+  } catch (e: any) {
+    errorTitle = 'Unexpected Error';
+    errorMsg = e?.message || 'Something went wrong while loading the article.';
+  }
+}
+---
+
+<DashboardLayout title="Edit Article">
+  <div class="flex flex-col items-center justify-center py-20 text-center">
+    <div class="w-16 h-16 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mb-4">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+      </svg>
+    </div>
+    <h2 class="text-lg font-bold text-[#1e293b] mb-1">{errorTitle}</h2>
+    <p class="text-sm text-[#64748b] max-w-md mb-6">{errorMsg}</p>
+    <div class="flex items-center gap-3">
+      <a href="/posts" class="text-sm font-semibold text-white bg-[#1a73e8] hover:opacity-90 px-5 py-2.5 rounded-lg transition-opacity">
+        ← Back to All Posts
+      </a>
+      <a href="/" class="text-sm font-semibold text-[#475569] bg-slate-100 hover:bg-slate-200 px-5 py-2.5 rounded-lg transition-colors">
+        Dashboard
+      </a>
+    </div>
+  </div>
+</DashboardLayout>

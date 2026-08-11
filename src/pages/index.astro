@@ -1,0 +1,1837 @@
+---
+// src/pages/index.astro
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import SeoInspectionModal from "../components/SeoInspectionModal.astro";
+import { sitesConfig, getActiveSite } from "../config/sitesConfig";
+import { getPostsCatalog, getRecentCommits } from "../lib/github";
+import { env } from "cloudflare:workers";
+import { getSession, getSessionToken } from "../lib/auth"; // Import these
+
+const activeSite = getActiveSite();
+const token = env?.GITHUB_PAT || import.meta.env.GITHUB_PAT;
+
+// --- User Session and Role ---
+const sessionToken = getSessionToken(Astro.request.headers.get("cookie"));
+let isAdmin = false;
+let sessionEmail: string | null = null;
+if (sessionToken) {
+  const session = await getSession(env?.SESSION as KVNamespace, sessionToken);
+  if (session) {
+    sessionEmail = session.email || null;
+    if (session.role === "admin") {
+      isAdmin = true;
+    }
+  }
+}
+
+// ─── 1. Published Posts (Smart: KV-first, 0 API calls on cache hit) ──────────
+const RECENT_LIMIT = 6;
+let totalPosts = 0;
+let recentPosts: any[] = [];
+const postTitleMap: Record<string, string> = {};
+
+try {
+  const catalog = await getPostsCatalog(
+    activeSite.githubOwner,
+    activeSite.githubRepo,
+    activeSite.contentPath,
+    token,
+    activeSite.branch,
+    env?.CACHE_KV,
+  );
+  totalPosts = catalog.totalCount;
+
+  // Sort by publish date (most recent first)
+  const sortedPosts = catalog.posts.sort((a, b) => {
+    const timeA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const timeB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+    if (timeA === timeB) {
+      return (b.slug || "").localeCompare(a.slug || "");
+    }
+    return timeB - timeA;
+  });
+
+  recentPosts = sortedPosts.slice(0, RECENT_LIMIT);
+
+  // Build postTitleMap for SEO modal (from cached catalog — no extra API calls)
+  for (const post of sortedPosts) {
+    const postUrl = `${activeSite.url}/post/${post.slug}/`;
+    postTitleMap[postUrl] = post.title || post.slug;
+  }
+} catch {}
+
+
+// ─── 2. R2 Bucket Stats ───────────────────────────────────────────────────────
+let totalImages = 0;
+let totalStorageBytes = 0;
+try {
+  const bucket = env?.IMG_BUCKET;
+  if (bucket) {
+    const listed = await bucket.list({ limit: 1000 });
+    totalImages = listed.objects.length;
+    totalStorageBytes = listed.objects.reduce(
+      (sum: number, obj: any) => sum + (obj.size || 0),
+      0,
+    );
+  }
+} catch {}
+
+// ─── 3. KV Draft Status ──────────────────────────────────────────────────────
+let hasDraft = false;
+let draftTitle: string | null = null;
+let draftUpdatedAt: string | null = null;
+let resumeUrl = "/write";
+try {
+  // Use sessionEmail (from getSession) as primary source — more reliable than Astro.locals.user
+  const userEmail = sessionEmail || Astro.locals.user?.email || 'anonymous';
+  console.error('[DraftDebug] userEmail for draft lookup:', userEmail);
+  const prefix = `draft:cms:write-article:${userEmail}:`;
+  const draftList = env?.CACHE_KV ? await env.CACHE_KV.list({ prefix }) : { keys: [] };
+
+  if (draftList && draftList.keys.length > 0) {
+    let newestDraft: any = null;
+    let newestKey = "";
+
+    for (const keyObj of draftList.keys) {
+      const draft = await env.CACHE_KV.get(keyObj.name, "json") as any;
+      if (draft) {
+        const ts = draft.timestamp || draft.updatedAt || "";
+        const newestTs = newestDraft ? (newestDraft.timestamp || newestDraft.updatedAt || "") : "";
+        if (!newestDraft || new Date(ts) > new Date(newestTs)) {
+          newestDraft = draft;
+          newestKey = keyObj.name;
+        }
+      }
+    }
+
+    if (newestDraft) {
+      hasDraft = true;
+      draftTitle = newestDraft.postTitle || newestDraft.title || null;
+      draftUpdatedAt = newestDraft.timestamp || newestDraft.updatedAt || null;
+
+      const suffix = newestKey.replace(prefix, "");
+      if (suffix && suffix !== "new") {
+        const displayFile = suffix.includes('/') ? suffix.split('/').pop() : suffix;
+        resumeUrl = `/write?file=${encodeURIComponent(displayFile)}`;
+      } else {
+        resumeUrl = "/write";
+      }
+    }
+  }
+} catch (e) {
+  console.error("Error loading draft status:", e);
+}
+
+// ─── 4. Recent GitHub Commits ─────────────────────────────────────────────────
+let recentCommits: any[] = [];
+try {
+  recentCommits = await getRecentCommits(
+    activeSite.githubOwner,
+    activeSite.githubRepo,
+    activeSite.branch,
+    token,
+    5,
+  );
+} catch {}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return "Unknown";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+const lastCommit = recentCommits[0] || null;
+---
+
+<DashboardLayout title="Dashboard">
+  <!-- ── Draft Recovery Banner ─────────────────────────────────────────────── -->
+  {
+    hasDraft && (
+      <div
+        id="draftBanner"
+        class="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-4 shadow-sm"
+      >
+        <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shrink-0">
+          <svg
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+            />
+          </svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-amber-800">
+            Unsaved Draft Found
+          </p>
+          <p class="text-xs text-amber-600 mt-0.5 truncate">
+            {draftTitle ? `"${draftTitle}"` : "Untitled Draft"}
+            {draftUpdatedAt ? ` · Last edited ${timeAgo(draftUpdatedAt)}` : ""}
+          </p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <a
+            href={resumeUrl}
+            class="text-sm font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 px-4 py-2 rounded-lg transition-colors"
+          >
+            Resume Draft →
+          </a>
+          <button
+            id="dismissDraftBanner"
+            class="w-8 h-8 flex items-center justify-center text-amber-500 hover:text-amber-700 hover:bg-amber-100 rounded-lg transition-colors"
+            title="Dismiss"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  <!-- ── 5 Stat Cards ──────────────────────────────────────────────────────── -->
+  <div
+    class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 mb-6"
+  >
+    <!-- Card 1: Total Posts -->
+    <div
+      class="bg-white p-5 rounded-xl border border-[#e2e8f0] shadow-sm hover:shadow-md transition-shadow flex items-center gap-4 lg:flex-col lg:items-stretch lg:gap-0 lg:h-full"
+    >
+      <div
+        class="w-12 h-12 lg:w-11 lg:h-11 bg-blue-50 rounded-xl flex items-center justify-center text-[#1a73e8] shrink-0 lg:mb-4"
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"
+          ></path>
+        </svg>
+      </div>
+      <div class="lg:flex lg:flex-col lg:flex-1">
+        <p
+          class="text-[#64748b] text-xs font-semibold uppercase tracking-wider"
+        >
+          Total Published
+        </p>
+        <p
+          class="text-2xl lg:text-3xl font-bold text-[#1e293b] mt-0.5 lg:mt-1.5"
+        >
+          {totalPosts}
+        </p>
+        <p class="text-xs text-[#94a3b8] mt-0.5 lg:mt-auto lg:pt-3">
+          Articles on GitHub
+        </p>
+      </div>
+    </div>
+
+    <!-- Card 2: R2 Media -->
+    <div
+      class="bg-white p-5 rounded-xl border border-[#e2e8f0] shadow-sm hover:shadow-md transition-shadow flex items-center gap-4 lg:flex-col lg:items-stretch lg:gap-0 lg:h-full"
+    >
+      <div
+        class="w-12 h-12 lg:w-11 lg:h-11 bg-purple-50 rounded-xl flex items-center justify-center text-purple-600 shrink-0 lg:mb-4"
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+          ></path>
+        </svg>
+      </div>
+      <div class="lg:flex lg:flex-col lg:flex-1">
+        <p
+          class="text-[#64748b] text-xs font-semibold uppercase tracking-wider"
+        >
+          R2 Media Library
+        </p>
+        <p
+          class="text-2xl lg:text-3xl font-bold text-[#1e293b] mt-0.5 lg:mt-1.5"
+        >
+          {totalImages}
+        </p>
+        <p class="text-xs text-[#94a3b8] mt-0.5 lg:mt-auto lg:pt-3">
+          {formatBytes(totalStorageBytes)} used
+        </p>
+      </div>
+    </div>
+
+    <!-- Card 3: Draft Status -->
+    <div
+      class={`bg-white p-5 rounded-xl border shadow-sm hover:shadow-md transition-shadow flex items-center gap-4 lg:flex-col lg:items-stretch lg:gap-0 lg:h-full ${hasDraft ? "border-amber-200" : "border-[#e2e8f0]"}`}
+    >
+      <div
+        class={`w-12 h-12 lg:w-11 lg:h-11 rounded-xl flex items-center justify-center shrink-0 lg:mb-4 ${hasDraft ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-400"}`}
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+          ></path>
+        </svg>
+      </div>
+      <div class="min-w-0 flex-1 lg:flex lg:flex-col">
+        <p
+          class="text-[#64748b] text-xs font-semibold uppercase tracking-wider"
+        >
+          Draft Status
+        </p>
+        {
+          hasDraft ? (
+            <>
+              <p class="text-sm font-bold text-amber-600 mt-0.5 lg:mt-1.5 truncate">
+                {draftTitle || "Untitled"}
+              </p>
+              <a
+                href={resumeUrl}
+                class="text-xs text-[#1a73e8] hover:underline mt-0.5 lg:mt-auto lg:pt-3 block"
+              >
+                Resume editing →
+              </a>
+            </>
+          ) : (
+            <>
+              <p class="text-2xl lg:text-3xl font-bold text-[#1e293b] mt-0.5 lg:mt-1.5">
+                None
+              </p>
+              <p class="text-xs text-[#94a3b8] mt-0.5 lg:mt-auto lg:pt-3">
+                No saved drafts
+              </p>
+            </>
+          )
+        }
+      </div>
+    </div>
+
+    <!-- Card 4: Last GitHub Push -->
+    <div
+      class="bg-white p-5 rounded-xl border border-[#e2e8f0] shadow-sm hover:shadow-md transition-shadow flex items-center gap-4 lg:flex-col lg:items-stretch lg:gap-0 lg:h-full"
+    >
+      <div
+        class="w-12 h-12 lg:w-11 lg:h-11 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 shrink-0 lg:mb-4"
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+        </svg>
+      </div>
+      <div class="min-w-0 flex-1 lg:flex lg:flex-col">
+        <p
+          class="text-[#64748b] text-xs font-semibold uppercase tracking-wider"
+        >
+          Last GitHub Push
+        </p>
+        {
+          lastCommit ? (
+            <>
+              <p class="text-sm font-bold text-[#1e293b] mt-0.5 lg:mt-1.5">
+                {timeAgo(lastCommit.date)}
+              </p>
+              <p class="text-xs text-[#94a3b8] mt-0.5 lg:mt-auto lg:pt-3 truncate">
+                {lastCommit.shortSha} · {lastCommit.message.slice(0, 30)}
+              </p>
+            </>
+          ) : (
+            <>
+              <p class="text-2xl lg:text-3xl font-bold text-[#1e293b] mt-0.5 lg:mt-1.5">
+                —
+              </p>
+              <p class="text-xs text-[#94a3b8] mt-0.5 lg:mt-auto lg:pt-3">
+                Unable to fetch
+              </p>
+            </>
+          )
+        }
+      </div>
+    </div>
+
+    <!-- Card 5: SEO Summary -->
+    <div
+      class="bg-white p-5 rounded-xl border border-[#e2e8f0] shadow-sm hover:shadow-md transition-shadow flex items-start gap-4 lg:flex-col lg:items-stretch lg:gap-0 lg:h-full"
+    >
+      <div
+        class="w-12 h-12 lg:w-11 lg:h-11 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0 mt-0.5 lg:mt-0 lg:mb-4 animate-pulse-subtle"
+      >
+        <svg
+          class="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+          ></path>
+        </svg>
+      </div>
+      <div class="min-w-0 flex-1 lg:flex lg:flex-col text-left">
+        <div class="flex items-center justify-between">
+          <p
+            class="text-[#64748b] text-xs font-semibold uppercase tracking-wider"
+          >
+            SEO Indexing
+          </p>
+          <button
+            id="cardSyncGscBtn"
+            class="p-1.5 rounded-lg text-slate-400 hover:text-[#1a73e8] hover:bg-slate-100/80 transition-colors cursor-pointer"
+            title="Sync GSC Status"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+          </button>
+        </div>
+        <div
+          class="mt-2.5 space-y-1 lg:space-y-1.5 text-[10px] lg:flex-1 lg:flex lg:flex-col lg:justify-center"
+        >
+          <!-- Indexed -->
+          <div
+            onclick="openSeoDetailsModal('indexed')"
+            class="flex items-center justify-between bg-[#f0fdf4] hover:bg-[#dcfce7] px-2 py-0.5 rounded-md border border-[#bbf7d0] text-[#166534] transition-all hover:scale-[1.02] active:scale-[0.99] cursor-pointer"
+          >
+            <span class="flex items-center gap-1 font-semibold">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#16a34a]"></span>
+              Indexed
+            </span>
+            <span class="font-bold" id="summary-count-indexed">0</span>
+          </div>
+          <!-- Pending -->
+          <div
+            onclick="openSeoDetailsModal('pending')"
+            class="flex items-center justify-between bg-[#fffbeb] hover:bg-[#fef3c7] px-2 py-0.5 rounded-md border border-[#fde68a] text-[#854d0e] transition-all hover:scale-[1.02] active:scale-[0.99] cursor-pointer"
+          >
+            <span class="flex items-center gap-1 font-semibold">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#d97706]"></span>
+              Pending
+            </span>
+            <span class="font-bold" id="summary-count-pending">0</span>
+          </div>
+          <!-- Errors -->
+          <div
+            onclick="openSeoDetailsModal('error')"
+            class="flex items-center justify-between bg-[#fef2f2] hover:bg-[#fee2e2] px-2 py-0.5 rounded-md border border-[#fecaca] text-[#991b1b] transition-all hover:scale-[1.02] active:scale-[0.99] cursor-pointer"
+          >
+            <span class="flex items-center gap-1 font-semibold">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#dc2626]"></span>
+              Errors
+            </span>
+            <span class="font-bold" id="summary-count-error">0</span>
+          </div>
+          <!-- Unknown -->
+          <div
+            onclick="openSeoDetailsModal('unknown')"
+            class="flex items-center justify-between bg-[#f8fafc] hover:bg-[#f1f5f9] px-2 py-0.5 rounded-md border border-[#e2e8f0] text-[#475569] transition-all hover:scale-[1.02] active:scale-[0.99] cursor-pointer"
+          >
+            <span class="flex items-center gap-1 font-semibold">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#64748b]"></span>
+              Unknown
+            </span>
+            <span class="font-bold" id="summary-count-unknown">0</span>
+          </div>
+        </div>
+        <p
+          id="summary-last-sync-wrapper"
+          class="text-[10px] text-[#94a3b8] mt-2.5 lg:mt-auto lg:pt-2.5 truncate"
+          title="Last Sync GSC"
+        >
+          Last Sync: <span id="summary-last-sync">Never</span>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Main 2-col Grid ────────────────────────────────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+    <!-- Left: Recent Articles -->
+    <div
+      class="lg:col-span-2 bg-white rounded-xl border border-[#e2e8f0] shadow-sm overflow-hidden flex flex-col"
+    >
+      <div
+        class="px-5 py-4 border-b border-[#e2e8f0] bg-[#f8fafc] flex justify-between items-center"
+      >
+        <div>
+          <h2 class="text-base font-bold text-[#1e293b]">Recent Articles</h2>
+          <p class="text-xs text-[#94a3b8] mt-0.5">
+            Latest {Math.min(totalPosts, RECENT_LIMIT)} of {totalPosts} published
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="relative hidden sm:block">
+            <svg
+              class="w-3.5 h-3.5 text-[#cbd5e1] absolute left-2.5 top-1/2 -translate-y-1/2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+            <input
+              type="text"
+              id="recentSearchInput"
+              placeholder="Filter..."
+              class="pl-8 pr-3 py-1.5 text-xs border border-[#e2e8f0] rounded-lg bg-white w-32 focus:w-44 focus:outline-none focus:border-[#1a73e8] transition-all"
+            />
+          </div>
+          <a
+            href="/posts"
+            class="text-xs font-semibold text-[#1a73e8] hover:underline bg-blue-50 px-3 py-1.5 rounded-lg transition-colors hover:bg-blue-100 whitespace-nowrap"
+          >
+            View All →
+          </a>
+        </div>
+      </div>
+
+      <div id="recentArticlesList" class="divide-y divide-[#f1f5f9]">
+        {
+          recentPosts.length === 0 ? (
+            <div class="flex flex-col items-center justify-center py-12 text-[#94a3b8]">
+              <svg
+                class="w-10 h-10 mb-3 text-[#cbd5e1]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              <p class="text-sm font-medium">No articles found</p>
+              <a
+                href="/write"
+                class="text-xs text-[#1a73e8] mt-1 hover:underline"
+              >
+                Write your first post →
+              </a>
+            </div>
+          ) : (
+            recentPosts.map((post, i) => (
+              <div
+                class="recent-article-row flex items-center gap-3 px-5 py-3.5 hover:bg-[#f8fafc] transition-colors group"
+                data-slug={post.slug.toLowerCase()}
+                data-name={post.name.toLowerCase()}
+                data-path={post.path}
+              >
+                <div class="w-7 h-7 rounded bg-[#f1f5f9] group-hover:bg-blue-50 flex items-center justify-center text-[#94a3b8] group-hover:text-[#1a73e8] transition-colors shrink-0">
+                  <svg
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-[13px] font-semibold font-mono text-[#1e293b] truncate group-hover:text-[#1a73e8] transition-colors">
+                    {post.title || post.slug}
+                  </p>
+                  <p class="text-xs text-[#94a3b8] mt-0.5 truncate">
+                    {post.path}
+                  </p>
+                  <p class="post-meta-line text-[11px] text-[#64748b] mt-0.5 flex items-center gap-2.5 flex-wrap">
+                    <span class="post-meta-date inline-flex items-center gap-1">
+                      <svg
+                        class="w-3 h-3 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        />
+                      </svg>
+                      <span class="post-meta-date-text">···</span>
+                    </span>
+                    <span class="post-meta-views inline-flex items-center gap-1">
+                      <svg
+                        class="w-3 h-3 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <>
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                          />
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </>
+                      </svg>
+                      <span class="post-meta-views-text">···</span>
+                    </span>
+                  </p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                  <a
+                    href={`${activeSite.url}/post/${post.slug}/`}
+                    target="_blank"
+                    class="w-7 h-7 flex items-center justify-center text-[#64748b] hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                    title="View Live"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                      />
+                    </svg>
+                  </a>
+                  <a
+                    href={`/edit?file=${post.name}`}
+                    class="text-xs font-medium text-[#1a73e8] bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition-colors"
+                    title="Edit Article"
+                  >
+                    Edit
+                  </a>
+                  <button
+                    type="button"
+                    onclick={`confirmDeleteArticle(event, '${post.path}', '${post.sha}')`}
+                    class="w-7 h-7 flex items-center justify-center text-[#dc2626] hover:bg-rose-50 rounded transition-colors"
+                    title="Delete Article"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))
+          )
+        }
+      </div>
+      <div
+        id="recentNoMatch"
+        class="hidden flex-col items-center justify-center py-10 text-[#94a3b8]"
+      >
+        <p class="text-sm font-medium">No articles match your filter.</p>
+      </div>
+    </div>
+
+    <!-- Right: Quick Actions -->
+    <div
+      class="bg-white rounded-xl border border-[#e2e8f0] shadow-sm overflow-hidden flex flex-col"
+    >
+      <div class="px-5 py-4 border-b border-[#e2e8f0] bg-[#f8fafc]">
+        <h2 class="text-base font-bold text-[#1e293b]">Quick Actions</h2>
+      </div>
+      <div class="p-4 flex flex-col gap-2.5">
+        <!-- Write New Post -->
+        <a
+          href="/write"
+          class="flex items-center gap-3 p-3.5 rounded-lg border border-[#e2e8f0] hover:border-[#1a73e8] hover:bg-blue-50 transition-all group"
+        >
+          <div
+            class="w-9 h-9 rounded-lg bg-[#1a73e8] text-white flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 4v16m8-8H4"></path>
+            </svg>
+          </div>
+          <div>
+            <p
+              class="text-sm font-semibold text-[#1e293b] group-hover:text-[#1a73e8] transition-colors"
+            >
+              Create New Post
+            </p>
+            <p class="text-xs text-[#94a3b8]">AI-assisted writing</p>
+          </div>
+        </a>
+
+        <!-- Manage Posts -->
+        <a
+          href="/posts"
+          class="flex items-center gap-3 p-3.5 rounded-lg border border-[#e2e8f0] hover:border-[#1a73e8] hover:bg-blue-50 transition-all group"
+        >
+          <div
+            class="w-9 h-9 rounded-lg bg-slate-100 text-[#475569] flex items-center justify-center shrink-0 group-hover:bg-blue-100 group-hover:text-[#1a73e8] transition-colors"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+            </svg>
+          </div>
+          <div>
+            <p
+              class="text-sm font-semibold text-[#1e293b] group-hover:text-[#1a73e8] transition-colors"
+            >
+              Manage Content
+            </p>
+            <p class="text-xs text-[#94a3b8]">
+              {totalPosts} articles · edit & delete
+            </p>
+          </div>
+        </a>
+
+        <!-- View Live Site -->
+        <a
+          href={activeSite.url}
+          target="_blank"
+          class="flex items-center gap-3 p-3.5 rounded-lg border border-[#e2e8f0] hover:border-emerald-400 hover:bg-emerald-50 transition-all group"
+        >
+          <div
+            class="w-9 h-9 rounded-lg bg-slate-100 text-[#475569] flex items-center justify-center shrink-0 group-hover:bg-emerald-100 group-hover:text-emerald-600 transition-colors"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+              ></path>
+            </svg>
+          </div>
+          <div>
+            <p
+              class="text-sm font-semibold text-[#1e293b] group-hover:text-emerald-700 transition-colors"
+            >
+              View Live Site
+            </p>
+            <p class="text-xs text-[#94a3b8]">
+              {activeSite.url.replace("https://", "")}
+            </p>
+          </div>
+        </a>
+
+        <!-- SEO Ping (Functional) -->
+        <button
+          id="seoPingBtn"
+          class="flex items-center gap-3 p-3.5 rounded-lg border border-[#e2e8f0] hover:border-violet-400 hover:bg-violet-50 transition-all group w-full text-left"
+        >
+          <div
+            class="w-9 h-9 rounded-lg bg-slate-100 text-[#475569] flex items-center justify-center shrink-0 group-hover:bg-violet-100 group-hover:text-violet-600 transition-colors"
+          >
+            <svg
+              id="seoPingIcon"
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
+              ></path>
+            </svg>
+          </div>
+          <div>
+            <p
+              class="text-sm font-semibold text-[#1e293b] group-hover:text-violet-700 transition-colors"
+            >
+              Ping Search Engines
+            </p>
+            <p id="seoPingStatus" class="text-xs text-[#94a3b8]">
+              Submit sitemap to Google & Bing
+            </p>
+          </div>
+        </button>
+      </div>
+
+      <!-- Site Info Footer -->
+      <div class="mt-auto border-t border-[#f1f5f9] px-5 py-4 bg-[#f8fafc]">
+        <p
+          class="text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-2"
+        >
+          Active Site
+        </p>
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-[#94a3b8]">Repo</span>
+            <span class="text-xs font-mono font-medium text-[#475569]"
+              >{activeSite.githubRepo}</span
+            >
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-[#94a3b8]">Branch</span>
+            <span class="text-xs font-mono font-medium text-[#475569]"
+              >{activeSite.branch}</span
+            >
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-[#94a3b8]">Content Path</span>
+            <span
+              class="text-xs font-mono font-medium text-[#475569] truncate max-w-[120px]"
+              >{activeSite.contentPath}</span
+            >
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-[#94a3b8]">Worker</span>
+            <span
+              class="inline-flex items-center gap-1 text-xs font-medium text-emerald-600"
+            >
+              <span class="relative flex h-2 w-2">
+                <span
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+                ></span>
+                <span
+                  class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"
+                ></span>
+              </span>
+              Healthy
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GitHub Commits Feed ────────────────────────────────────────────────── -->
+  {
+    recentCommits.length > 0 && (
+      <div class="bg-white rounded-xl border border-[#e2e8f0] shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-[#e2e8f0] bg-[#f8fafc] flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-[#1e293b]">Recent Commits</h2>
+              <p class="text-xs text-[#94a3b8]">
+                {activeSite.githubOwner}/{activeSite.githubRepo} ·{" "}
+                {activeSite.branch}
+              </p>
+            </div>
+          </div>
+          {isAdmin && (
+            <a
+              href={`https://github.com/${activeSite.githubOwner}/${activeSite.githubRepo}/commits/${activeSite.branch}`}
+              target="_blank"
+              class="text-xs font-semibold text-[#1a73e8] hover:underline bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors"
+            >
+              View on GitHub →
+            </a>
+          )}
+          {!isAdmin && (
+            <span
+              class="text-xs font-semibold text-gray-400 bg-gray-100 px-3 py-1.5 rounded-lg cursor-not-allowed"
+              title="Only admins can view commits"
+            >
+              View on GitHub →
+            </span>
+          )}
+        </div>
+
+        <div class="divide-y divide-[#f1f5f9]">
+          {recentCommits.map((commit) => (
+            <div class="flex items-center gap-4 px-5 py-3 hover:bg-[#f8fafc] transition-colors group">
+              <code class="text-[10px] font-mono bg-[#f1f5f9] text-[#64748b] px-2 py-1 rounded shrink-0 group-hover:bg-blue-50 group-hover:text-[#1a73e8] transition-colors">
+                {commit.shortSha}
+              </code>
+              <p class="flex-1 text-sm text-[#475569] truncate">
+                {commit.message}
+              </p>
+              <div class="flex items-center gap-3 shrink-0">
+                <span class="text-xs text-[#94a3b8] hidden sm:block">
+                  {commit.author}
+                </span>
+                <span class="text-xs text-[#94a3b8]">
+                  {timeAgo(commit.date)}
+                </span>
+                {isAdmin ? (
+                  <a
+                    href={commit.url}
+                    target="_blank"
+                    class="w-6 h-6 flex items-center justify-center text-[#94a3b8] hover:text-[#1a73e8] opacity-0 group-hover:opacity-100 transition-all"
+                    title="View commit"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                      />
+                    </svg>
+                  </a>
+                ) : (
+                  <span
+                    class="w-6 h-6 flex items-center justify-center text-gray-400 opacity-0 group-hover:opacity-100 cursor-not-allowed"
+                    title="Only admins can view commit details"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                      />
+                    </svg>
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  <!-- Modern Confirm Modal (mirrors write.astro's customConfirmOverlay) -->
+  <div
+    id="customConfirmOverlay"
+    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-[80] items-center justify-center opacity-0 transition-opacity duration-300"
+  >
+    <div
+      class="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-md transform scale-95 transition-transform duration-300 flex flex-col overflow-hidden"
+    >
+      <div class="p-6">
+        <div
+          class="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center mb-4 text-rose-600"
+        >
+          <svg
+            class="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            ></path>
+          </svg>
+        </div>
+        <h3
+          id="customConfirmTitle"
+          class="text-xl font-bold text-[#1e293b] mb-2"
+        >
+          Confirm Action
+        </h3>
+        <p id="customConfirmMsg" class="text-sm text-[#475569] leading-relaxed">
+        </p>
+      </div>
+      <div
+        class="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-slate-100"
+      >
+        <button
+          id="customConfirmCancel"
+          class="px-5 py-2.5 text-sm font-semibold text-[#475569] hover:bg-[#e2e8f0] rounded-lg transition-colors"
+          >Cancel</button
+        >
+        <button
+          id="customConfirmOk"
+          class="px-5 py-2.5 text-sm font-semibold text-white rounded-lg transition-colors shadow-sm"
+          >Confirm</button
+        >
+      </div>
+    </div>
+  </div>
+
+  <!-- SEO Indexing Details Modal -->
+  <div
+    id="seoDetailsModal"
+    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-[80] items-center justify-center opacity-0 transition-opacity duration-300"
+    onclick="if(event.target === this) closeSeoDetailsModal()"
+  >
+    <div
+      class="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col h-[70vh] overflow-hidden"
+    >
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+        <div>
+          <h3 class="text-base font-bold text-[#1e293b]">SEO Indexing Details</h3>
+          <p class="text-xs text-[#64748b] mt-0.5">Explore cached URLs and their GSC index status</p>
+        </div>
+        <button
+          onclick="closeSeoDetailsModal()"
+          class="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-full transition-colors"
+          title="Close Modal"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Tabs -->
+      <div class="px-6 bg-slate-50 border-b border-slate-100 flex gap-2 shrink-0 overflow-x-auto scrollbar-none">
+        <button
+          id="tab-indexed"
+          onclick="switchSeoTab('indexed')"
+          class="px-3 py-2.5 text-xs font-bold border-b-2 border-transparent text-[#64748b] hover:text-[#1e293b] transition-all whitespace-nowrap cursor-pointer"
+        >
+          Indexed (<span id="modal-count-indexed">0</span>)
+        </button>
+        <button
+          id="tab-pending"
+          onclick="switchSeoTab('pending')"
+          class="px-3 py-2.5 text-xs font-bold border-b-2 border-transparent text-[#64748b] hover:text-[#1e293b] transition-all whitespace-nowrap cursor-pointer"
+        >
+          Pending (<span id="modal-count-pending">0</span>)
+        </button>
+        <button
+          id="tab-error"
+          onclick="switchSeoTab('error')"
+          class="px-3 py-2.5 text-xs font-bold border-b-2 border-transparent text-[#64748b] hover:text-[#1e293b] transition-all whitespace-nowrap cursor-pointer"
+        >
+          Errors (<span id="modal-count-error">0</span>)
+        </button>
+        <button
+          id="tab-unknown"
+          onclick="switchSeoTab('unknown')"
+          class="px-3 py-2.5 text-xs font-bold border-b-2 border-transparent text-[#64748b] hover:text-[#1e293b] transition-all whitespace-nowrap cursor-pointer"
+        >
+          Unknown (<span id="modal-count-unknown">0</span>)
+        </button>
+      </div>
+
+      <!-- Modal Body (Scrollable List) -->
+      <div class="flex-1 overflow-y-auto p-5" id="seoModalListContainer">
+        <!-- List items rendered dynamically by client script -->
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+        <button
+          onclick="closeSeoDetailsModal()"
+          class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 hover:text-slate-800 text-xs font-semibold rounded-lg transition-colors shadow-sm cursor-pointer"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div
+    id="toast-container"
+    class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"
+  >
+  </div>
+  <div id="seo-post-data" data-map={JSON.stringify(postTitleMap)} class="hidden"></div>
+  <SeoInspectionModal />
+</DashboardLayout>
+
+<script is:inline>
+  // ── SEO Indexing Details Modal Logic ──────────────────────────────────────────
+  const postTitleMapEl = document.getElementById("seo-post-data");
+  const postTitleMap = postTitleMapEl ? JSON.parse(postTitleMapEl.getAttribute("data-map") || "{}") : {};
+
+  let activeSeoTab = "indexed";
+  let indexedUrls = [];
+  let pendingUrls = [];
+  let errorUrls = [];
+  let unknownUrls = [];
+
+  // Function to load and hydrate GSC data from localStorage
+  window.hydrateIndexGsc = function () {
+    const cacheData = localStorage.getItem("seo_cache_data");
+    let cache = { lastSync: null, urls: {} };
+    if (cacheData) {
+      try {
+        cache = JSON.parse(cacheData) || cache;
+      } catch (e) {}
+    }
+
+    // Clean up cache to remove non-canonical URLs without trailing slash
+    let cacheModified = false;
+    const cleanUrls = {};
+    if (cache.urls) {
+      for (const u in cache.urls) {
+        if (u.endsWith('/')) {
+          cleanUrls[u] = cache.urls[u];
+        } else {
+          cacheModified = true;
+        }
+      }
+      cache.urls = cleanUrls;
+      if (cacheModified) {
+        try {
+          localStorage.setItem("seo_cache_data", JSON.stringify(cache));
+        } catch (e) {}
+      }
+    }
+
+    indexedUrls = [];
+    pendingUrls = [];
+    errorUrls = [];
+    unknownUrls = [];
+
+    const urlsObj = cache.urls || {};
+    for (const url in urlsObj) {
+      if (!url.endsWith('/')) continue; // Skip non-canonical URLs without trailing slash
+      const info = urlsObj[url];
+      const status = info.status;
+      const item = { url, info };
+      if (status === 'indexed') {
+        indexedUrls.push(item);
+      } else if (status === 'pending' || status === 'crawled') {
+        pendingUrls.push(item);
+      } else if (status === 'error') {
+        errorUrls.push(item);
+      } else {
+        unknownUrls.push(item);
+      }
+    }
+
+    // Update Card Counts
+    const updateCount = (id, count) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = count;
+    };
+
+    updateCount("summary-count-indexed", indexedUrls.length);
+    updateCount("summary-count-pending", pendingUrls.length);
+    updateCount("summary-count-error", errorUrls.length);
+    updateCount("summary-count-unknown", unknownUrls.length);
+
+    updateCount("modal-count-indexed", indexedUrls.length);
+    updateCount("modal-count-pending", pendingUrls.length);
+    updateCount("modal-count-error", errorUrls.length);
+    updateCount("modal-count-unknown", unknownUrls.length);
+
+    // Update Last Sync Footer
+    const lastSyncEl = document.getElementById("summary-last-sync");
+    if (lastSyncEl) {
+      if (cache.lastSync) {
+        const date = new Date(cache.lastSync);
+        lastSyncEl.textContent = date.toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        const wrapper = document.getElementById("summary-last-sync-wrapper");
+        if (wrapper) {
+          wrapper.title = "Last Sync: " + date.toLocaleString("en-IN");
+        }
+      } else {
+        lastSyncEl.textContent = "Never";
+      }
+    }
+
+    // Re-render modal content if open
+    const modal = document.getElementById("seoDetailsModal");
+    if (modal && modal.classList.contains("flex")) {
+      renderSeoUrls();
+    }
+  };
+
+  // Run on page load
+  document.addEventListener("DOMContentLoaded", () => {
+    window.hydrateIndexGsc();
+  });
+  // Fallback direct run in case DOMContentLoaded already fired
+  window.hydrateIndexGsc();
+
+  // Add click listener for GSC Sync button
+  document.addEventListener("DOMContentLoaded", () => {
+    const syncBtn = document.getElementById("cardSyncGscBtn");
+    if (syncBtn) {
+      syncBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const originalHtml = syncBtn.innerHTML;
+        syncBtn.disabled = true;
+        syncBtn.innerHTML = `<svg class="animate-spin h-3.5 w-3.5 text-[#1a73e8]" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+        try {
+          const urls = Object.keys(postTitleMap);
+          if (urls.length === 0) {
+            if (window.showToast) {
+              window.showToast("No posts found to sync.", "error");
+            }
+            syncBtn.disabled = false;
+            syncBtn.innerHTML = originalHtml;
+            return;
+          }
+
+          const CHUNK_SIZE = 10;
+          let successCount = 0;
+          let failedCount = 0;
+
+          for (let i = 0; i < urls.length; i += CHUNK_SIZE) {
+            const chunk = urls.slice(i, i + CHUNK_SIZE);
+            
+            const response = await fetch("/api/google/bulk-refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ urls: chunk }),
+            });
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+              successCount += (data.results || []).length;
+              const cacheData = localStorage.getItem("seo_cache_data");
+              let cache = { lastSync: null, urls: {} };
+              if (cacheData) {
+                try {
+                  cache = JSON.parse(cacheData) || cache;
+                } catch (e) {}
+              }
+              cache.lastSync = new Date().toISOString();
+              if (data.results && Array.isArray(data.results)) {
+                data.results.forEach((r) => {
+                  if (r.url) {
+                    cache.urls[r.url] = r;
+                  }
+                });
+              }
+              localStorage.setItem("seo_cache_data", JSON.stringify(cache));
+              
+              // Hydrate UI after each chunk
+              window.hydrateIndexGsc();
+            } else {
+              failedCount += chunk.length;
+              console.error("GSC Sync chunk failed:", data.error || "Unknown error");
+            }
+          }
+
+          if (successCount > 0) {
+            if (window.showToast) {
+              window.showToast(`SEO statuses synced successfully! (${successCount} posts)`, "success");
+            }
+          } else {
+            throw new Error("All batches failed to sync. Please try again.");
+          }
+        } catch (err) {
+          console.error("GSC Sync Error:", err);
+          if (window.showToast) {
+            window.showToast(err.message || "Network error while syncing GSC.", "error");
+          }
+        } finally {
+          syncBtn.innerHTML = originalHtml;
+          syncBtn.disabled = false;
+        }
+      });
+    }
+  });
+
+  window.openSeoDetailsModal = function (status) {
+    const overlay = document.getElementById("seoDetailsModal");
+    if (!overlay) return;
+
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    void overlay.offsetWidth;
+    overlay.classList.remove("opacity-0");
+    overlay.firstElementChild.classList.remove("scale-95");
+
+    switchSeoTab(status || "indexed");
+  };
+
+  window.closeSeoDetailsModal = function () {
+    const overlay = document.getElementById("seoDetailsModal");
+    if (!overlay) return;
+
+    overlay.classList.add("opacity-0");
+    overlay.firstElementChild.classList.add("scale-95");
+    setTimeout(() => {
+      overlay.classList.add("hidden");
+      overlay.classList.remove("flex");
+    }, 300);
+  };
+
+  window.switchSeoTab = function (status) {
+    activeSeoTab = status;
+
+    // Update active tab styles
+    const tabs = ["indexed", "pending", "error", "unknown"];
+    tabs.forEach((t) => {
+      const el = document.getElementById(`tab-${t}`);
+      if (el) {
+        if (t === status) {
+          el.classList.add("border-[#1a73e8]", "text-[#1a73e8]");
+          el.classList.remove("border-transparent", "text-[#64748b]");
+        } else {
+          el.classList.remove("border-[#1a73e8]", "text-[#1a73e8]");
+          el.classList.add("border-transparent", "text-[#64748b]");
+        }
+      }
+    });
+
+    renderSeoUrls();
+  };
+
+  window.copySeoUrl = function (btn, url) {
+    navigator.clipboard.writeText(url).then(() => {
+      const originalContent = btn.innerHTML;
+      btn.innerHTML = `<svg class="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`;
+      if (window.showToast) {
+        window.showToast("URL copied to clipboard!", "success");
+      }
+      setTimeout(() => {
+        btn.innerHTML = originalContent;
+      }, 1500);
+    }).catch(err => {
+      console.error("Copy failed", err);
+      if (window.showToast) {
+        window.showToast("Failed to copy URL", "error");
+      }
+    });
+  };
+
+  function renderSeoUrls() {
+    const container = document.getElementById("seoModalListContainer");
+    if (!container) return;
+
+    let items = [];
+    if (activeSeoTab === "indexed") items = indexedUrls;
+    else if (activeSeoTab === "pending") items = pendingUrls;
+    else if (activeSeoTab === "error") items = errorUrls;
+    else if (activeSeoTab === "unknown") items = unknownUrls;
+
+    if (items.length === 0) {
+      container.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-10 text-[#94a3b8]">
+          <svg class="w-10 h-10 mb-3 text-[#cbd5e1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p class="text-sm font-medium">No URLs found in this category.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Render list
+    container.innerHTML = `
+      <div class="space-y-3">
+        ${items.map((item) => {
+          const url = typeof item === "string" ? item : (item.url || "");
+          const info = (typeof item === "object" && item) ? item.info : null;
+          const title = postTitleMap[url] || "";
+
+          // Exact GSC error or coverage status
+          let coverageText = info?.coverage || info?.error || "";
+          if (!coverageText && activeSeoTab === "error") {
+            coverageText = "Google Search Console reported an indexing error";
+          }
+
+          // Format fetch status text cleanly
+          let fetchStatusText = info?.pageFetchStatus || "";
+          if (fetchStatusText.includes("UNSPECIFIED") || fetchStatusText.includes("Unspecified")) {
+            fetchStatusText = "Not attempted yet";
+          } else if (fetchStatusText === "SUCCESSFUL") {
+            fetchStatusText = "Successful";
+          }
+
+          let badgeColorClass = "";
+          let iconSvg = "";
+
+          if (activeSeoTab === "error") {
+            badgeColorClass = "bg-rose-50 text-rose-700 border-rose-200/80";
+            iconSvg = `<svg class="w-3.5 h-3.5 text-rose-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+          } else if (activeSeoTab === "pending") {
+            badgeColorClass = "bg-amber-50 text-amber-700 border-amber-200/80";
+            iconSvg = `<svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+          } else if (activeSeoTab === "indexed") {
+            badgeColorClass = "bg-emerald-50 text-emerald-700 border-emerald-200/80";
+            iconSvg = `<svg class="w-3.5 h-3.5 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`;
+          } else {
+            badgeColorClass = "bg-slate-100 text-slate-700 border-slate-200";
+            iconSvg = `<svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+          }
+
+          return `
+            <div class="p-3 sm:p-3.5 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100/60 transition-colors flex items-center justify-between gap-3 sm:gap-4">
+              <div class="min-w-0 flex-1">
+                ${title ? `<p class="text-xs font-bold text-slate-800 truncate">${title}</p>` : ""}
+                <p class="text-[10px] sm:text-[11px] text-slate-500 font-mono truncate mt-0.5" title="${url}">${url}</p>
+                ${coverageText ? `
+                  <div class="mt-1.5 sm:mt-2 flex items-center gap-1.5 sm:gap-2 flex-wrap max-w-full overflow-hidden">
+                    <span class="inline-flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md border ${badgeColorClass} whitespace-nowrap max-w-full overflow-hidden">
+                      ${iconSvg}
+                      <span class="truncate max-w-[200px] sm:max-w-none">${coverageText}</span>
+                    </span>
+                    ${fetchStatusText && fetchStatusText !== 'Successful' && fetchStatusText !== 'Unknown' ? `
+                      <span class="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-medium px-1.5 py-0.5 sm:px-2 rounded bg-slate-200/70 text-slate-700 border border-slate-300/60 whitespace-nowrap">
+                        Fetch: ${fetchStatusText}
+                      </span>
+                    ` : ""}
+                  </div>
+                ` : ""}
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button
+                  onclick="openSeoModal(event, '${url}')"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-[#1a73e8] hover:bg-blue-50 active:scale-95 transition-all cursor-pointer"
+                  title="View full GSC inspection details"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                </button>
+                <button
+                  onclick="copySeoUrl(this, '${url}')"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-slate-700 hover:bg-slate-50 active:scale-95 transition-all cursor-pointer"
+                  title="Copy URL"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                  </svg>
+                </button>
+                <a
+                  href="${url}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-[#1a73e8] hover:bg-blue-50 active:scale-95 transition-all"
+                  title="Open live URL"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  // ── Modern Confirm Modal ──────────────────────────────────────────────────────
+  function showConfirm(
+    title,
+    message,
+    btnText = "Confirm",
+    confirmColor = "bg-rose-600 hover:bg-rose-700",
+  ) {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById("customConfirmOverlay");
+      const titleEl = document.getElementById("customConfirmTitle");
+      const msgEl = document.getElementById("customConfirmMsg");
+      const btnOk = document.getElementById("customConfirmOk");
+      const btnCancel = document.getElementById("customConfirmCancel");
+
+      titleEl.textContent = title;
+      msgEl.textContent = message;
+
+      btnOk.className = `px-5 py-2.5 text-sm font-semibold text-white rounded-lg transition-colors shadow-sm ${confirmColor}`;
+      btnOk.textContent = btnText;
+
+      overlay.classList.remove("hidden");
+      overlay.classList.add("flex");
+      void overlay.offsetWidth;
+      overlay.classList.remove("opacity-0");
+      overlay.firstElementChild.classList.remove("scale-95");
+
+      const cleanup = (result) => {
+        overlay.classList.add("opacity-0");
+        overlay.firstElementChild.classList.add("scale-95");
+        setTimeout(() => {
+          overlay.classList.add("hidden");
+          overlay.classList.remove("flex");
+        }, 300);
+        btnOk.removeEventListener("click", onOk);
+        btnCancel.removeEventListener("click", onCancel);
+        resolve(result);
+      };
+
+      const onOk = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+
+      btnOk.addEventListener("click", onOk);
+      btnCancel.addEventListener("click", onCancel);
+    });
+  }
+
+  // ── Toast System ─────────────────────────────────────────────────────────────
+  window.showToast = function (message, type = "success") {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const colors = {
+      success: "bg-emerald-600",
+      error: "bg-red-600",
+      info: "bg-[#1a73e8]",
+      warning: "bg-amber-500",
+    };
+    const icons = {
+      success: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>`,
+      error: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>`,
+      info: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>`,
+      warning: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>`,
+    };
+    const toast = document.createElement("div");
+    toast.className = `pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl text-white shadow-xl transform transition-all duration-300 translate-y-4 opacity-0 ${colors[type] || colors.info} max-w-xs`;
+    toast.innerHTML = `
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">${icons[type] || icons.info}</svg>
+      <span class="text-sm font-medium">${message}</span>
+    `;
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.classList.remove("translate-y-4", "opacity-0");
+      toast.classList.add("translate-y-0", "opacity-100");
+    });
+    setTimeout(() => {
+      toast.classList.add("translate-y-4", "opacity-0");
+      setTimeout(() => toast.remove(), 300);
+    }, 4000);
+  };
+
+  // ── Draft Banner Dismiss ──────────────────────────────────────────────────────
+  const dismissBtn = document.getElementById("dismissDraftBanner");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", () => {
+      const banner = document.getElementById("draftBanner");
+      if (banner) {
+        banner.style.transition = "opacity 0.3s, transform 0.3s";
+        banner.style.opacity = "0";
+        banner.style.transform = "translateY(-8px)";
+        setTimeout(() => banner.remove(), 300);
+      }
+    });
+  }
+
+  // ── SEO Ping Handler (with 60s cooldown to avoid IndexNow 429) ──────────────
+  const seoPingBtn = document.getElementById("seoPingBtn");
+  const seoPingIcon = document.getElementById("seoPingIcon");
+  const seoPingStatus = document.getElementById("seoPingStatus");
+  const SEO_PING_COOLDOWN_KEY = "seoPingLastTimestamp";
+  const SEO_PING_COOLDOWN_MS = 60_000; // 60 seconds between pings
+
+  if (seoPingBtn) {
+    seoPingBtn.addEventListener("click", async () => {
+      // ── Client-side cooldown check ──
+      const lastPingTs = parseInt(localStorage.getItem(SEO_PING_COOLDOWN_KEY) || "0", 10);
+      const elapsed = Date.now() - lastPingTs;
+      if (elapsed < SEO_PING_COOLDOWN_MS) {
+        const waitSec = Math.ceil((SEO_PING_COOLDOWN_MS - elapsed) / 1000);
+        showToast(`⏳ Please wait ${waitSec}s before pinging again (rate-limit protection).`, "warning");
+        return;
+      }
+
+      seoPingBtn.disabled = true;
+      if (seoPingIcon) {
+        seoPingIcon.innerHTML = `<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" stroke="none" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>`;
+        seoPingIcon.setAttribute("class", "w-4 h-4 animate-spin");
+      }
+      if (seoPingStatus) seoPingStatus.textContent = "Pinging engines...";
+
+      try {
+        const res = await fetch("/api/ping-seo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json();
+
+        // Record successful ping timestamp for cooldown
+        localStorage.setItem(SEO_PING_COOLDOWN_KEY, String(Date.now()));
+
+        if (data.success) {
+          showToast(
+            `✓ Pinged ${data.successCount}/${data.totalCount} engines successfully!`,
+            "success",
+          );
+          if (seoPingStatus)
+            seoPingStatus.textContent = `Last ping: just now · ${data.successCount}/${data.totalCount} success`;
+        } else {
+          showToast("Ping failed. Check console for details.", "error");
+          if (seoPingStatus)
+            seoPingStatus.textContent = "Ping failed. Retry later.";
+        }
+
+        // Show per-engine results
+        if (data.results && Array.isArray(data.results)) {
+          data.results.forEach((r, i) => {
+            const delay = i * 400;
+            setTimeout(() => {
+              const icon =
+                r.status === "success"
+                  ? "✓"
+                  : r.status === "skipped"
+                    ? "⊘"
+                    : "✗";
+              const type =
+                r.status === "success"
+                  ? "success"
+                  : r.status === "skipped"
+                    ? "info"
+                    : "warning";
+              showToast(`${icon} ${r.engine}: ${r.message}`, type);
+            }, delay);
+          });
+        }
+      } catch (err) {
+        console.error("SEO Ping error:", err);
+        showToast("Network error. Try again.", "error");
+        if (seoPingStatus) seoPingStatus.textContent = "Network error.";
+      } finally {
+        seoPingBtn.disabled = false;
+        if (seoPingIcon) {
+          seoPingIcon.setAttribute("class", "w-4 h-4");
+          seoPingIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>`;
+        }
+      }
+    });
+  }
+
+  // ── Recent Articles: Live Filter ─────────────────────────────────────────────
+  const recentSearchInput = document.getElementById("recentSearchInput");
+  const recentRows = document.querySelectorAll(".recent-article-row");
+  const recentNoMatch = document.getElementById("recentNoMatch");
+  const recentList = document.getElementById("recentArticlesList");
+
+  if (recentSearchInput) {
+    recentSearchInput.addEventListener("input", (e) => {
+      const term = e.target.value.toLowerCase().trim();
+      let visibleCount = 0;
+      recentRows.forEach((row) => {
+        const slug = row.getAttribute("data-slug") || "";
+        const name = row.getAttribute("data-name") || "";
+        const matches = !term || slug.includes(term) || name.includes(term);
+        row.style.display = matches ? "" : "none";
+        if (matches) visibleCount++;
+      });
+      if (recentNoMatch && recentList) {
+        if (visibleCount === 0 && term) {
+          recentNoMatch.classList.remove("hidden");
+          recentNoMatch.classList.add("flex");
+        } else {
+          recentNoMatch.classList.add("hidden");
+          recentNoMatch.classList.remove("flex");
+        }
+      }
+    });
+  }
+
+  // ── Recent Articles: Delete Handler ──────────────────────────────────────────
+  window.confirmDeleteArticle = async function (event, path, sha) {
+    // IMPORTANT: capture the button + row reference BEFORE the await.
+    // After an `await`, the original click `event` can become stale/null
+    // (the browser does not guarantee `event.currentTarget` survives an
+    // async gap), which was causing "Cannot read properties of null
+    // (reading 'closest')". Always grab what you need synchronously first.
+    const btn = event.currentTarget;
+    const row = btn.closest(".recent-article-row");
+
+    const confirmed = await showConfirm(
+      "Delete Article",
+      `Are you sure you want to delete "${path}"? This action cannot be undone.`,
+      "Delete",
+      "bg-rose-600 hover:bg-rose-700",
+    );
+    if (!confirmed) return;
+    const originalContent = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<svg class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+    try {
+      const res = await fetch("/api/delete-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, sha }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        showToast("Article deleted successfully!", "success");
+        if (row) {
+          row.style.transition = "opacity 0.25s, transform 0.25s";
+          row.style.opacity = "0";
+          row.style.transform = "translateX(8px)";
+          setTimeout(() => row.remove(), 250);
+        }
+      } else {
+        showToast("Error: " + (data.error || "Failed to delete"), "error");
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+      }
+    } catch (err) {
+      console.error("Delete error:", err);
+      showToast("Network error while deleting.", "error");
+      btn.innerHTML = originalContent;
+      btn.disabled = false;
+    }
+  };
+
+  // ── Recent Articles: Publish Date + Real View Count (Cloudflare Analytics) ───
+  function formatPublishDate(iso) {
+    if (!iso) return "Date unavailable";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "Date unavailable";
+    return d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  function formatViews(n) {
+    if (n === null || n === undefined) return null; // analytics not configured
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "K views";
+    return `${n} view${n === 1 ? "" : "s"}`;
+  }
+
+  (async function hydrateRecentArticleMeta() {
+    const rows = document.querySelectorAll(".recent-article-row");
+    if (rows.length === 0) return;
+
+    try {
+      const res = await fetch("/api/post-views");
+      if (!res.ok) throw new Error("post-views fetch failed");
+      const data = await res.json();
+      if (!data || !Array.isArray(data.posts)) return;
+
+      const byPath = new Map(data.posts.map((p) => [p.path, p]));
+
+      rows.forEach((row) => {
+        const path = row.getAttribute("data-path");
+        const info = path ? byPath.get(path) : null;
+        const dateEl = row.querySelector(".post-meta-date-text");
+        const viewsEl = row.querySelector(".post-meta-views-text");
+        const viewsWrap = row.querySelector(".post-meta-views");
+
+        if (dateEl) {
+          dateEl.textContent = info
+            ? formatPublishDate(info.publishedAt)
+            : "Date unavailable";
+        }
+
+        if (viewsWrap && viewsEl) {
+          const viewsLabel = info ? formatViews(info.views) : null;
+          if (viewsLabel === null) {
+            viewsWrap.classList.add("hidden"); // analytics not configured yet
+          } else {
+            viewsEl.textContent = viewsLabel;
+          }
+        }
+      });
+    } catch (err) {
+      console.error("hydrateRecentArticleMeta error:", err);
+      document.querySelectorAll(".post-meta-date-text").forEach((el) => {
+        el.textContent = "Date unavailable";
+      });
+      document
+        .querySelectorAll(".post-meta-views")
+        .forEach((el) => el.classList.add("hidden"));
+    }
+  })();
+
+</script>
