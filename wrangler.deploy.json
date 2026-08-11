@@ -17,7 +17,7 @@
 	},
 	"vars": {
 		"IMAGE_PUBLIC_BASE_URL": "https://images.YOUR-DOMAIN.com",
-		"BLOG_BASE_URL": "https://YOUR-BLOG-DOMAIN.com",
+		"BLOG_BASE_URL": "https://demo-blog.quicdecode.com",
 		"CF_ZONE_TAG": "YOUR_CF_ZONE_TAG",
 		"BING_INDEXNOW_KEY": "YOUR_BING_INDEXNOW_KEY",
 		"VID_PUBLIC_BASE_URL": "https://cdn.YOUR-DOMAIN.com",
@@ -26,35 +26,41 @@
 	"kv_namespaces": [
 		{
 			"binding": "CACHE_KV",
-			"id": "YOUR_CACHE_KV_NAMESPACE_ID"
+			"id": "54dea43604524adfacaf86e3b559b48f"
 		},
 		{
 			"binding": "SESSION",
-			"id": "YOUR_SESSION_NAMESPACE_ID"
+			"id": "c622eb21acd240b4a338de0bced4c235"
 		}
 	],
 	"r2_buckets": [
 		{
 			"binding": "IMG_BUCKET",
-			"bucket_name": "qd-images"
+			"bucket_name": "demo-qd-images"
 		},
 		{
 			"binding": "STORY_BUCKET",
-			"bucket_name": "qd-stories"
+			"bucket_name": "demo-qd-stories"
 		},
 		{
 			"binding": "VID_BUCKET",
-			"bucket_name": "qd-videos"
+			"bucket_name": "demo-qd-videos"
 		}
 	],
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "qd-cms-db",
-			"database_id": "YOUR_D1_DATABASE_ID"
+			"database_name": "demo-qd-cms-db",
+			"database_id": "953dde60-da59-4b11-b959-ee6ed7767f1f"
 		}
 	],
 	"ai": {
 		"binding": "AI"
-	}
+	},
+	"routes": [
+		{
+			"pattern": "demo-cms.quicdecode.com",
+			"custom_domain": true
+		}
+	]
 }
