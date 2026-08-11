@@ -21,4 +21,4 @@ const hash = await hashPassword(password);
 
 console.log('\n✅  Hash generated:\n');
 console.log(hash);
-console.log('\n👆  इसे USERS_JSON में "hash" field में paste करें\n');
+console.log('\n👆  Paste this into the "hash" field of USERS_JSON\n');

@@ -16,7 +16,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (provider === 'pexels') {
       const key = env.PEXELS_API_KEY || import.meta.env.PEXELS_API_KEY;
-      if (!key) return jsonErr('Pexels API Key .env में नहीं मिली', 500);
+      if (!key) return jsonErr('Pexels API Key not found in .env', 500);
       const res = await fetch(
         `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=30&page=${p}&orientation=landscape`,
         { headers: { Authorization: key } }
@@ -26,7 +26,7 @@ export const POST: APIRoute = async ({ request }) => {
       results = (data.photos || []).map((ph: any) => ({ url: ph.src.large, thumb: ph.src.medium }));
     } else if (provider === 'pixabay') {
       const key = env.PIXABAY_API_KEY || import.meta.env.PIXABAY_API_KEY;
-      if (!key) return jsonErr('Pixabay API Key .env में नहीं मिली', 500);
+      if (!key) return jsonErr('Pixabay API Key not found in .env', 500);
       const res = await fetch(
         `https://pixabay.com/api/?key=${key}&q=${encodeURIComponent(q)}&per_page=30&page=${p}&orientation=horizontal`
       );
@@ -35,7 +35,7 @@ export const POST: APIRoute = async ({ request }) => {
       results = (data.hits || []).map((ph: any) => ({ url: ph.largeImageURL, thumb: ph.previewURL }));
     } else if (provider === 'unsplash') {
       const key = env.UNSPLASH_API_KEY || import.meta.env.UNSPLASH_API_KEY;
-      if (!key) return jsonErr('Unsplash API Key .env में नहीं मिली', 500);
+      if (!key) return jsonErr('Unsplash API Key not found in .env', 500);
       const res = await fetch(
         `https://api.unsplash.com/search/photos?query=${encodeURIComponent(q)}&per_page=30&page=${p}&orientation=landscape`,
         { headers: { Authorization: `Client-ID ${key}` } }

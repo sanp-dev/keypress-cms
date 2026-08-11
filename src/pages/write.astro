@@ -1644,7 +1644,7 @@ const filePath = (fileParam && !fileParam.includes('/'))
                             <button
                                 type="button"
                                 onclick="openImageModal('unsplash','cover')"
-                                title="Cover Image select/upload करें"
+                                title="Select/upload Cover Image"
                                 aria-label="Insert Cover Image"
                                 class="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border border-[#cbd5e1] bg-[#f8fafc] text-[#1a73e8] hover:bg-[#1a73e8] hover:text-white hover:border-[#1a73e8] transition-colors"
                             >
@@ -5053,7 +5053,7 @@ ${questionHTMLs.join("\n")}
             return;
         }
 
-        // Console Tab पर switch करें ताकि logs दिखें
+        // Switch to Console Tab to view logs
         const consoleTabBtn = document.querySelector(
             '.tab-btn[data-target="consoleView"]',
         );
@@ -5150,7 +5150,7 @@ ${questionHTMLs.join("\n")}
             notify(
                 "icon",
                 "Auto-Link Failed",
-                "Error: " + e.message + " — Console Logs देखें",
+                "Error: " + e.message + " — Check Console Logs",
                 true,
             );
         } finally {
@@ -5322,7 +5322,7 @@ ${questionHTMLs.join("\n")}
     let stockHasMore = true;
     let stockFetchInFlight = false;
     let fluxInFlight = false;
-    let imgModalMode = "body"; // 'body' = article editor cursor पर insert, 'cover' = सिर्फ Cover Image URL field में set
+    let imgModalMode = "body"; // 'body' = insert at article editor cursor, 'cover' = set only in Cover Image URL field
     function copyImgPrompt() {
         const val = document.getElementById("aiImgPrompt").value;
         if (!val) return;

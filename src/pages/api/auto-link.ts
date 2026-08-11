@@ -38,7 +38,7 @@ export const POST: APIRoute = async ({ request }) => {
     const BLOG_BASE_URL = rawBlogBaseUrl.replace(/\/+$/, '');
     log('INFO', `Resolved Blog Base URL: ${BLOG_BASE_URL}`);
 
-    // ── Step 1: RSS से articles fetch करें ──
+    // ── Step 1: Fetch articles from RSS ──
     let suggestions: { title: string; url: string }[] = [];
 
     const rssCandidates = [
@@ -180,17 +180,17 @@ export const POST: APIRoute = async ({ request }) => {
     if (suggestions.length === 0) {
       log('ERROR', 'No published articles found from RSS, Sitemap, or GitHub fallback. Cannot proceed with auto-linking.');
       return new Response(JSON.stringify({
-        error: `No find any published article. Blog URL "${BLOG_BASE_URL}" पर RSS (${BLOG_BASE_URL}/rss.xml) या Sitemap accessible होना चाहिए।`,
+        error: `Could not find any published articles. Either RSS (${BLOG_BASE_URL}/rss.xml) or Sitemap must be accessible at Blog URL "${BLOG_BASE_URL}".`,
         logs
       }), { status: 400 });
     }
 
-    // ── Step 3: Current article title निकालें (for exclusion) ──
-    // HTML में पहला <h1> या <h2> tag से title guess करें
+    // ── Step 3: Extract current article title (for exclusion) ──
+    // Guess title from first <h1> or <h2> tag in HTML
     const currentTitleMatch = html.match(/<h[12][^>]*>(.*?)<\/h[12]>/i);
     const currentTitle = currentTitleMatch ? currentTitleMatch[1].replace(/<[^>]+>/g, '').trim().toLowerCase() : '';
 
-    // Current article के URL को suggestions से exclude करें
+    // Exclude current article URL from suggestions
     const filteredSuggestions = suggestions.filter(s => {
       const slugFromUrl = s.url.split('/').filter(Boolean).pop() || '';
       return s.title.toLowerCase() !== currentTitle && !html.includes(s.url);
@@ -273,7 +273,7 @@ ${html}`;
     if (!finalHtml || !successModel) {
       log('ERROR', 'All Gemini models failed. Auto-linking aborted.');
       return new Response(JSON.stringify({
-        error: 'सभी Gemini AI models fail हो गए। Console Logs देखें।',
+        error: 'All Gemini AI models failed. Please check the Console Logs.',
         logs
       }), { status: 500 });
     }

@@ -5,6 +5,9 @@ export interface AuthorProfile {
   slug: string;
   avatarUrl: string;
   bio: string;
+  // Role permissions:
+  // - 'Editor-in-Chief' (Mapped to 'admin' user role): Has full administrative access (write, edit, delete posts, upload media, notify)
+  // - 'Staff Writer' / 'Contributor' (Mapped to 'assistant' user role): Can write and edit posts, but cannot delete posts or manage settings
   role: string;
 }
 
@@ -13,9 +16,9 @@ export interface AuthorProfile {
 export const AUTHOR_REGISTRY: Record<string, AuthorProfile> = {
   // Demo admin user — replace with your actual email(s)
   'admin@example.com': {
-    name: 'Admin',
+    name: 'Admin Name',
     slug: 'admin',
-    avatarUrl: '/authors/default.png',
+    avatarUrl: '/authors/default.webp',
     bio: 'Site administrator.',
     role: 'Editor-in-Chief',
   },
@@ -34,7 +37,7 @@ export const AUTHOR_REGISTRY: Record<string, AuthorProfile> = {
 export const DEFAULT_AUTHOR: AuthorProfile = {
   name: 'Editorial Team',
   slug: 'editorial-team',
-  avatarUrl: '/authors/default.png',
+  avatarUrl: '/authors/default.webp',
   bio: 'Published by the editorial team.',
   role: 'Contributor',
 };

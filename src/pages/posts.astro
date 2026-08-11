@@ -251,7 +251,7 @@ const bingIndexNowKey = env?.BING_INDEXNOW_KEY || "";
                                                 </p>
                                                 {/* Mobile-only: inline meta */}
                                                 <div class="posts-mobile-meta hidden mt-2.5 flex">
-                                                    {/* Row: Date, Views और Hamburger Menu */}
+                                                    {/* Row: Date, Views, and Hamburger Menu */}
                                                     <div class="flex items-center gap-2 text-xs text-[#64748b] w-full">
                                                         <span class="inline-flex items-center gap-1.5 shrink-0">
                                                             <svg
@@ -297,7 +297,7 @@ const bingIndexNowKey = env?.BING_INDEXNOW_KEY || "";
                                                             <span class="post-meta-views-text">···</span>
                                                         </span>
 
-                                                        {/* Hamburger Menu — Live की जगह */}
+                                                        {/* Hamburger Menu — Instead of Live status */}
                                                         <div class="mobile-actions-menu relative inline-block ml-auto">
                                                             <button
                                                                 class="mobile-hamburger-btn flex items-center justify-center w-7 h-7 rounded-lg border border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f1f5f9] hover:border-[#cbd5e1] transition-all active:scale-95 shadow-sm"
@@ -378,7 +378,7 @@ const bingIndexNowKey = env?.BING_INDEXNOW_KEY || "";
                                                                     <span>Delete</span>
                                                                 </button>
 
-                                                                {/* Live Status — सबसे नीचे */}
+                                                                {/* Live Status — At the bottom */}
                                                                 <div class="mobile-menu-item w-full flex items-center gap-3 px-4 py-2.5">
                                                                     <span class="w-4 h-4 shrink-0 flex items-center justify-center">
                                                                         <span class="w-2 h-2 rounded-full bg-[#059669]"></span>
@@ -1102,7 +1102,7 @@ const bingIndexNowKey = env?.BING_INDEXNOW_KEY || "";
 
             if (response.ok && data.success) {
                 showToast("Article deleted successfully!", "success");
-                // 1.5 सेकंड का डिले ताकि यूजर Toast देख सके
+                // 1.5 second delay so the user can see the Toast
                 setTimeout(() => {
                     window.location.reload();
                 }, 1500);

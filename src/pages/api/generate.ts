@@ -9,11 +9,11 @@ export const POST: APIRoute = async ({ request }) => {
     const apiKey = env.GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "Gemini API Key .env फ़ाइल में नहीं मिली!" }), { status: 500 });
+      return new Response(JSON.stringify({ error: "Gemini API Key not found in .env file!" }), { status: 500 });
     }
 
     if (!topic) {
-      return new Response(JSON.stringify({ error: "Topic खाली है!" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Topic is empty!" }), { status: 400 });
     }
 
     
@@ -88,7 +88,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!generatedMarkdown) {
       return new Response(JSON.stringify({ 
-        error: "सभी एस्पिरेशनल मॉडल्स (Gemini 3.5/2.5) रिस्पॉन्ड करने में असमर्थ रहे। कृपया कंसोल टैब चेक करें।", 
+        error: "All aspirational models (Gemini 3.5/2.5) failed to respond. Please check the console tab.", 
         logs: executionLogs 
       }), { status: 500 });
     }
