@@ -2,10 +2,11 @@
 
 A self-hosted CMS dashboard built with Astro and deployed as a Cloudflare Worker. Designed to manage blog posts, images, and push notifications for the [DEMO-BLOG-QUICDECODE](https://github.com/sanp-dev/demo-blog) platform.
 
-## Live Demo
+## Live Demo & Resources
 
-[![Dashboard](https://img.shields.io/badge/🖥_Dashboard-demo--cms.quicdecode.com-1a73e8?style=for-the-badge)](https://demo-cms.quicdecode.com)
-[![Blog](https://img.shields.io/badge/🌐_Blog-demo--blog.quicdecode.com-34a853?style=for-the-badge)](https://demo-blog.quicdecode.com)
+[![Dashboard Demo](https://img.shields.io/badge/🖥_Dashboard_Demo-demo--cms.quicdecode.com-1a73e8?style=for-the-badge)](https://demo-cms.quicdecode.com)
+[![Blog Demo](https://img.shields.io/badge/🌐_Blog_Demo-demo--blog.quicdecode.com-34a853?style=for-the-badge)](https://demo-blog.quicdecode.com)
+[![Blog Repository](https://img.shields.io/badge/📦_Blog_GitHub_Repository-demo--blog-24292e?style=for-the-badge)](https://github.com/sanp-dev/demo-blog)
 
 ## Default Demo Login
 
