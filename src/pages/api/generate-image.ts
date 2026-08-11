@@ -5,6 +5,15 @@ import { makeSlug, randomSuffix, buildPublicUrl } from '../../lib/imageStore';
 
 export const POST: APIRoute = async (context) => {
   try {
+    // Demo Mode bypass
+    if (context.locals.user?.email?.toLowerCase() === 'admin@example.com') {
+      const mockUrl = 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=1280&auto=format&fit=crop&q=80';
+      return new Response(JSON.stringify({ url: mockUrl, width: 1280, height: 720 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const { prompt } = await context.request.json();
     if (!prompt || !prompt.trim()) {
       return new Response(JSON.stringify({ error: 'Empty Prompt!' }), { status: 400 });

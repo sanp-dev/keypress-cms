@@ -46,6 +46,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     const userEmail = locals.user?.email || 'anonymous';
+
+    // Demo Mode bypass
+    if (userEmail.toLowerCase() === 'admin@example.com') {
+      return new Response(JSON.stringify({ success: true, message: 'Draft saved (Demo Mode: Not stored in KV)' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const filePath = draft._editOriginalPath || '';
     
     // Construct user-separated and file-specific KV key
@@ -83,6 +92,15 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
     }
 
     const userEmail = locals.user?.email || 'anonymous';
+
+    // Demo Mode bypass
+    if (userEmail.toLowerCase() === 'admin@example.com') {
+      return new Response(JSON.stringify({ success: true, message: 'Draft cleared (Demo Mode: No action taken)' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const key = filePath 
       ? `draft:cms:write-article:${userEmail}:${filePath}`
       : `draft:cms:write-article:${userEmail}:new`;

@@ -548,6 +548,15 @@ export const DELETE: APIRoute = async (context) => {
       return jsonErr('Unauthorized: Admin access required', 403);
     }
 
+    // Demo Mode bypass
+    if (user.email.toLowerCase() === 'admin@example.com') {
+      const { key } = await context.request.json().catch(() => ({ key: 'unknown' }));
+      return new Response(
+        JSON.stringify({ success: true, message: `Successfully deleted (Demo Mode: R2 file ${key} untouched)` }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { key, type } = await context.request.json();
     if (!key) {
       return jsonErr('Key is required to delete R2 object', 400);

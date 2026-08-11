@@ -100,10 +100,11 @@ export async function createSession(
     createdAt: Date.now(),
   };
 
+  const ttl = email.toLowerCase() === 'admin@example.com' ? 60 * 10 : SESSION_TTL;
   await kv.put(
     `session:${email}:${token}`,
     JSON.stringify(sessionData),
-    { expirationTtl: SESSION_TTL }
+    { expirationTtl: ttl }
   );
 
   return token;
@@ -172,8 +173,9 @@ export async function clearRateLimit(
 }
 
 // ─── Cookie Helpers ────────────────────────────────────────────────────────
-export function createSessionCookie(token: string): string {
-  return `${COOKIE_NAME}=${token}; Max-Age=${SESSION_TTL}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+export function createSessionCookie(token: string, isDemo: boolean = false): string {
+  const age = isDemo ? 60 * 10 : SESSION_TTL;
+  return `${COOKIE_NAME}=${token}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Strict`;
 }
 
 export function clearSessionCookie(): string {

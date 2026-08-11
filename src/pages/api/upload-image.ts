@@ -12,6 +12,15 @@ function jsonErr(message: string, status: number) {
 
 export const POST: APIRoute = async (context) => {
   try {
+    // Demo Mode bypass
+    if (context.locals.user?.email?.toLowerCase() === 'admin@example.com') {
+      const mockUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80';
+      return new Response(JSON.stringify({ url: mockUrl, width: 1200, height: 800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     const form = await context.request.formData();
     const file = form.get('file');
     const altText = (form.get('altText') as string) || 'upload';

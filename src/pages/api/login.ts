@@ -58,7 +58,8 @@ export const POST: APIRoute = async ({ request }) => {
     // ── Session create ─────────────────────────────────────────────────────────
     await clearRateLimit(env.SESSION, ip);
     const token  = await createSession(env.SESSION, user.email, user.role);
-    const cookie = createSessionCookie(token);
+    const isDemo = user.email.toLowerCase() === 'admin@example.com';
+    const cookie = createSessionCookie(token, isDemo);
 
     return json({ success: true, role: user.role }, 200, {
       'Set-Cookie': cookie,
