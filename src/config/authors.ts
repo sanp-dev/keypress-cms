@@ -18,7 +18,7 @@ export const AUTHOR_REGISTRY: Record<string, AuthorProfile> = {
   'admin@example.com': {
     name: 'Admin Name',
     slug: 'admin',
-    avatarUrl: '/authors/default.webp',
+    avatarUrl: '/authors/default.png',
     bio: 'Site administrator.',
     role: 'Editor-in-Chief',
   },
@@ -37,7 +37,7 @@ export const AUTHOR_REGISTRY: Record<string, AuthorProfile> = {
 export const DEFAULT_AUTHOR: AuthorProfile = {
   name: 'Editorial Team',
   slug: 'editorial-team',
-  avatarUrl: '/authors/default.webp',
+  avatarUrl: '/authors/default.png',
   bio: 'Published by the editorial team.',
   role: 'Contributor',
 };
