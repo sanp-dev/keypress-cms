@@ -122,7 +122,7 @@ const filePath = (fileParam && !fileParam.includes('/'))
 
     <div
         id="uploadSpinnerOverlay"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden z-[110] items-center justify-center"
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden z-[200] items-center justify-center"
     >
         <div class="bg-white rounded-2xl px-8 py-7 text-center shadow-2xl">
             <div
@@ -5595,7 +5595,10 @@ ${questionHTMLs.join("\n")}
         const uploadBtn = e.target.closest(
             '[onclick*="uploadFileInput.click()"]',
         );
-        if (uploadBtn) {
+        const isModalUploadBtn = e.target.closest(
+            '[onclick*="uploadFileInputModal.click()"]',
+        );
+        if (uploadBtn && !isModalUploadBtn) {
             imgModalMode = "body";
             saveSelectionRange();
         }
