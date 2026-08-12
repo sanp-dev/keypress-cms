@@ -1,6 +1,6 @@
-# DEMO CMS — Setup Guide
+# Keypress CMS — Setup Guide
 
-This guide walks you through deploying DEMO-CMS-QUICDECODE to Cloudflare Workers.
+This guide walks you through deploying Keypress CMS to Cloudflare Workers.
 
 ---
 
@@ -23,7 +23,7 @@ This guide walks you through deploying DEMO-CMS-QUICDECODE to Cloudflare Workers
 - Node.js v22.12.0 or later
 - A Cloudflare account (free tier works)
 - A GitHub account + GitHub Personal Access Token
-- The [DEMO-BLOG-QUICDECODE](https://github.com/sanp-dev/demo-blog) repo (or your own Astro blog)
+- The [keypress-theme](https://github.com/sanp-dev/keypress-theme) repo (or your own Astro blog)
 
 Install dependencies:
 
@@ -193,7 +193,7 @@ npm run deploy
 ```
 
 Your dashboard will be available at:
-`https://demo-cms-quicdecode.YOUR-SUBDOMAIN.workers.dev`
+`https://keypress-cms.YOUR-SUBDOMAIN.workers.dev`
 
 ---
 

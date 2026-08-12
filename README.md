@@ -1,12 +1,12 @@
-# DEMO CMS — QuicDecode Content Management Dashboard
+# Keypress CMS — Content Management Dashboard
 
-A self-hosted CMS dashboard built with Astro and deployed as a Cloudflare Worker. Designed to manage blog posts, images, and push notifications for the [DEMO-BLOG-QUICDECODE](https://github.com/sanp-dev/demo-blog) platform.
+A self-hosted CMS dashboard built with Astro and deployed as a Cloudflare Worker. Designed to manage blog posts, images, and push notifications for the [keypress-theme](https://github.com/sanp-dev/keypress-theme) platform.
 
 ## Live Demo & Resources
 
 [![Dashboard Demo](https://img.shields.io/badge/🖥_Dashboard_Demo-demo--cms.quicdecode.com-1a73e8?style=for-the-badge)](https://demo-cms.quicdecode.com)
 [![Blog Demo](https://img.shields.io/badge/🌐_Blog_Demo-demo--blog.quicdecode.com-34a853?style=for-the-badge)](https://demo-blog.quicdecode.com)
-[![Blog Repository](https://img.shields.io/badge/📦_Blog_GitHub_Repository-demo--blog-24292e?style=for-the-badge)](https://github.com/sanp-dev/demo-blog)
+[![Blog Repository](https://img.shields.io/badge/📦_Blog_GitHub_Repository-keypress--theme-24292e?style=for-the-badge)](https://github.com/sanp-dev/keypress-theme)
 
 ## Default Demo Login
 
@@ -44,7 +44,7 @@ A self-hosted CMS dashboard built with Astro and deployed as a Cloudflare Worker
 ## Project Structure
 
 ```
-DEMO-CMS-QUICDECODE/
+keypress-cms/
 ├── scripts/
 │   ├── hash-password.mjs      # Generate PBKDF2 password hash
 │   └── get-refresh-token.mjs  # Google OAuth refresh token helper
@@ -77,8 +77,8 @@ See [SETUP.md](SETUP.md) for full setup instructions.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/DEMO-CMS-QUICDECODE.git
-cd DEMO-CMS-QUICDECODE
+git clone https://github.com/sanp-dev/keypress-cms.git
+cd keypress-cms
 
 # 2. Install dependencies
 npm install
@@ -96,4 +96,4 @@ npm run deploy
 
 ## License
 
-MIT — see [LICENSE.md](LICENSE.md)
+See [LICENSE.md](LICENSE.md) for full terms.

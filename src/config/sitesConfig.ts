@@ -1,17 +1,17 @@
 // src/config/sitesConfig.ts
 
 export const sitesConfig = {
-  demoblog: {
-    id: 'demoblog',
+  keypresstheme: {
+    id: 'keypresstheme',
     // The display name of your blog/website
-    name: 'Demo Blog',
-    // The public URL of your blog (your DEMO-BLOG-QUICDECODE deployment)
+    name: 'Keypress Theme',
+    // The public URL of your blog (your keypress-theme deployment)
     url: 'https://demo-blog.quicdecode.com',
     // Google Search Console property (e.g., 'sc-domain:your-domain.com')
     gscProperty: 'sc-domain:YOUR-DOMAIN.com',
     // Your GitHub username
     githubOwner: 'YOUR_GITHUB_USERNAME',
-    // The repository name of your blog (e.g., 'DEMO-BLOG-QUICDECODE' or your fork)
+    // The repository name of your blog (e.g., 'keypress-theme' or your fork)
     githubRepo: 'YOUR_BLOG_REPO_NAME',
     branch: 'main',
     // Path inside the repo where your blog posts (.md/.mdx) are stored

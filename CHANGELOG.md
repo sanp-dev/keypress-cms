@@ -4,7 +4,7 @@
 
 ### Initial Release
 
-- Initial public release of DEMO-CMS-QUICDECODE
+- Initial public release of **Keypress CMS**
 - Full-featured CMS dashboard based on Astro 7 + Cloudflare Workers
 - Secure session-based authentication (PBKDF2-SHA256 + Cloudflare KV)
 - Post editor with Markdown/MDX support, AI assist, auto-link injection
